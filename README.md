@@ -68,7 +68,8 @@ Until then, the module is public for visibility and review, not yet for consumpt
 ## Contributing
 
 Issues and discussion are welcome from day one. Code contributions will be easiest to accept
-after `v0.1.0` stabilizes the core API — a CONTRIBUTING guide will land with it.
+after `v0.1.0` stabilizes the core API. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+stdlib-only constraint, godoc/Example/benchmark expectations, and PR etiquette.
 
 ## License
 
