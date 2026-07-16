@@ -11,8 +11,9 @@ Causal inference for Go. Pure standard library. Zero dependencies.
 
 `causa` is a causal inference and causal discovery library for time series, written in pure
 Go (stdlib only, CGO-free). It is being built to power deterministic root-cause analysis in
-[AIOpsFlow](https://github.com/jousudo/aiopsflow) — an open-source AIOps platform — but it is
-designed as a general-purpose, standalone library with no ties to any host application.
+AIOpsFlow — an AIOps platform by the same author, currently in private development ahead of
+its own open-source release — but `causa` is designed as a general-purpose, standalone
+library with no ties to any host application.
 
 ## Why
 
