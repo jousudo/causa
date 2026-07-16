@@ -32,7 +32,7 @@ anywhere Go runs.
 
 | Capability | Method | Status |
 |---|---|---|
-| Granger causality | VAR fitting + F-test on time series | **In development** — first release target |
+| Granger causality | Pairwise OLS autoregressions (QR-fitted) + F-test | **Implemented on `main`** (pre-`v0.1.0`, not yet tagged) — ground-truth-validated and benchmarked; flags confounders by design (see below) |
 | Constraint-based discovery | PC algorithm (conditional-independence tests) | Planned |
 | Directional discovery | LiNGAM (ICA-based, non-Gaussian noise) | Planned |
 | Interventions / counterfactuals | SEM + do-calculus | Research |
@@ -41,6 +41,16 @@ Granger tells you that series *A* helps predict series *B* — necessary but not
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
 precedence" into defensible causal structure. They ship in that order, each validated before
 the next starts.
+
+`GrangerTest(cause, effect, lags)` is available now (import path `github.com/jousudo/causa`),
+though the module is still pre-`v0.1.0` and unreleased, so the API may change before it is
+tagged. It fits a restricted autoregression of `effect` on its own lags and an unrestricted one
+that adds `cause`'s lags, both via a Householder-QR least-squares solver, and reports the
+F-statistic and its p-value. **Known limitation — confounding:** if a hidden common cause drives
+both series, Granger reports causality even when no direct edge exists. This is inherent to the
+method, not a defect, and it is exactly why the PC algorithm and LiNGAM are on the roadmap; the
+behavior is pinned by a dedicated test (`TestGrangerFlagsConfounder`) and documented on the
+function so it is never mistaken for a true causal claim.
 
 ## Design principles
 
