@@ -55,11 +55,12 @@ test (`FisherZTest`) is the linear-Gaussian partial correlation — computed by 
 that reuses the same Householder solver as the Granger path — transformed by Fisher's *z*; the
 `CITest` extension point lets you supply another test for non-Gaussian or discrete data.
 
-The test of $x_i \perp\!\!\!\perp x_j \mid S$: residualize both variables on $[1, S]$, correlate
-the residuals, and refer the variance-stabilized statistic to the standard normal,
+The test of conditional independence $x_i \perp x_j \mid S$: residualize both variables on
+$[1, S]$, correlate the residuals, and refer the variance-stabilized statistic to the standard
+normal,
 
 ```math
-r_{ij\cdot S} = \operatorname{corr}\!\big(x_i - \hat{x}_i^{(S)},\; x_j - \hat{x}_j^{(S)}\big),
+r_{ij\cdot S} = \mathrm{corr}\big(x_i - \hat{x}_i^{(S)},\; x_j - \hat{x}_j^{(S)}\big),
 \qquad
 z = \tfrac{1}{2}\,\ln\frac{1+r_{ij\cdot S}}{1-r_{ij\cdot S}},
 ```
@@ -67,7 +68,7 @@ z = \tfrac{1}{2}\,\ln\frac{1+r_{ij\cdot S}}{1-r_{ij\cdot S}},
 ```math
 T = \sqrt{n - |S| - 3}\;\lvert z\rvert \;\overset{H_0}{\sim}\; \mathcal{N}(0,1),
 \qquad
-p = 2\big(1 - \Phi(T)\big) = \operatorname{erfc}\!\big(T/\sqrt{2}\big);
+p = 2\big(1 - \Phi(T)\big) = \mathrm{erfc}\big(T/\sqrt{2}\big);
 ```
 
 the edge is deleted (independence accepted) when $p > \alpha$ (default $\alpha = 0.05$), and the
