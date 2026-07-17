@@ -1,7 +1,7 @@
 // Package causa provides causal inference and causal discovery for time
 // series in pure Go (standard library only, CGO-free).
 //
-// Status: early development — v0.2.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.3.0 released; pre-v1.0, minor versions may
 // still change the API.
 //
 // Implemented:
@@ -15,7 +15,7 @@
 //   - Directional causal discovery — the deterministic DirectLiNGAM algorithm
 //     (DirectLiNGAM) for linear acyclic models with non-Gaussian independent
 //     noise, recovering a full causal order and weighted coefficient matrix.
-//     On main, ships in v0.3.0.
+//     Released in v0.3.0.
 //
 // Research: interventions and counterfactuals via SEM + do-calculus. See the
 // README for the honest roadmap and the assumptions each method rests on: no

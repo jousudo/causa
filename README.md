@@ -2,9 +2,9 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.2.0` released.** Granger causality shipped in `v0.1.0`;
-> PC-stable constraint-based discovery shipped in `v0.2.0`; DirectLiNGAM directional discovery is
-> implemented on `main` and ships in `v0.3.0`. Pre-1.0, minor versions may break the API. Nothing
+> **Status: early development — `v0.3.0` released.** Granger causality shipped in `v0.1.0`,
+> PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
+> `v0.3.0`. Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
 
@@ -36,7 +36,7 @@ anywhere Go runs.
 |---|---|---|
 | Granger causality | Pairwise OLS autoregressions (QR-fitted) + F-test | **Released in `v0.1.0`** — ground-truth-validated and benchmarked; flags confounders by design (see below) |
 | Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Released in `v0.2.0`** — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
-| Directional discovery | DirectLiNGAM (deterministic, non-Gaussian noise) → causal order + weighted DAG | **Implemented on `main`** (unreleased — ships in `v0.3.0`) — ground-truth-validated and benchmarked; identifies a fully directed model when the noise is non-Gaussian (see below) |
+| Directional discovery | DirectLiNGAM (deterministic, non-Gaussian noise) → causal order + weighted DAG | **Released in `v0.3.0`** — ground-truth-validated and benchmarked; identifies a fully directed model when the noise is non-Gaussian (see below) |
 | Interventions / counterfactuals | SEM + do-calculus | Research |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
@@ -54,6 +54,24 @@ unshielded colliders, and closes under Meek's rules R1–R4. The default conditi
 test (`FisherZTest`) is the linear-Gaussian partial correlation — computed by QR-residualization
 that reuses the same Householder solver as the Granger path — transformed by Fisher's *z*; the
 `CITest` extension point lets you supply another test for non-Gaussian or discrete data.
+
+The test of $x_i \perp\!\!\!\perp x_j \mid S$: residualize both variables on $[1, S]$, correlate
+the residuals, and refer the variance-stabilized statistic to the standard normal,
+
+```math
+r_{ij\cdot S} = \operatorname{corr}\!\big(x_i - \hat{x}_i^{(S)},\; x_j - \hat{x}_j^{(S)}\big),
+\qquad
+z = \tfrac{1}{2}\,\ln\frac{1+r_{ij\cdot S}}{1-r_{ij\cdot S}},
+```
+
+```math
+T = \sqrt{n - |S| - 3}\;\lvert z\rvert \;\overset{H_0}{\sim}\; \mathcal{N}(0,1),
+\qquad
+p = 2\big(1 - \Phi(T)\big) = \operatorname{erfc}\!\big(T/\sqrt{2}\big);
+```
+
+the edge is deleted (independence accepted) when $p > \alpha$ (default $\alpha = 0.05$), and the
+levels stop growing once $n - |S| - 3 < 1$ (the honest small-sample cap described below).
 
 **Output is a CPDAG, not a DAG.** Constraint-based discovery identifies structure only up to
 *Markov equivalence*. A **directed** edge `A → C` is compelled (every DAG consistent with the data
@@ -83,6 +101,35 @@ approximation built from `E[log cosh]` and `E[x·exp(−x²/2)]` moments), regre
 rest, and recurses; the connection strengths are then least-squares estimates on the original data.
 Reused throughout is the same Householder-QR OLS solver as the Granger and PC paths.
 
+The model and the mathematics behind the direction choice: for standardized data the structural
+model is
+
+```math
+x = B\,x + e,
+```
+
+with $B$ strictly lower-triangular in the causal order and $e$ mutually independent, non-Gaussian
+disturbances. The differential entropy of a standardized variable $u$ is estimated by the
+maximum-entropy approximation (Hyvärinen 1998),
+
+```math
+\hat{H}(u) \;\approx\; \tfrac{1}{2}\big(1+\ln 2\pi\big)
+\;-\; k_1\big(\mathbb{E}[\ln\cosh u] - \gamma\big)^2
+\;-\; k_2\big(\mathbb{E}[\,u\,e^{-u^2/2}\,]\big)^2,
+```
+
+with $k_1 = 79.047$, $k_2 = 7.4129$, $\gamma = 0.37457$. For a candidate cause $x_i$ against
+$x_j$, the directional statistic is the log-likelihood ratio of the two directions,
+
+```math
+T \;=\; \big(H(x_j) + H(r_i^{(j)})\big) \;-\; \big(H(x_i) + H(r_j^{(i)})\big),
+```
+
+where $r_i^{(j)}$ is the standardized OLS residual of $x_i$ on $x_j$ (and vice versa): a positive
+$T$ favors $x_i \to x_j$. Each candidate is scored by $\sum_j \min(0, T)^2$ — penalizing only the
+pairs that testify *against* its exogeneity — and the minimizer (a true root scores ≈ 0) is peeled
+off; ties break to the lowest index, keeping the whole procedure deterministic.
+
 **Where PC leaves an edge undirected, LiNGAM directs it.** A chain `A → B → C` and a fork
 `A ← B → C` are one Markov equivalence class — indistinguishable to a constraint-based method — but
 DirectLiNGAM separates them, because non-Gaussian noise breaks the symmetry that made them
@@ -99,10 +146,28 @@ divergence from the reference implementations: coefficient pruning is a simple a
 threshold (`LiNGAMOptions.PruneThreshold`), not adaptive-lasso, which would require an L1 optimizer
 this stdlib-only library does not carry.
 
+### Granger causality
+
 `GrangerTest(cause, effect, lags)` is available since `v0.1.0` (import path
 `github.com/jousudo/causa`). It fits a restricted autoregression of `effect` on its own lags and an unrestricted one
 that adds `cause`'s lags, both via a Householder-QR least-squares solver, and reports the
-F-statistic and its p-value. **Known limitation — confounding:** if a hidden common cause drives
+F-statistic and its p-value:
+
+```math
+\text{restricted:}\quad y_t = c + \sum_{i=1}^{p} a_i\,y_{t-i} + \varepsilon_t
+\qquad\quad
+\text{unrestricted:}\quad y_t = c + \sum_{i=1}^{p} a_i\,y_{t-i} + \sum_{i=1}^{p} b_i\,x_{t-i} + \varepsilon_t
+```
+
+```math
+F = \frac{(\mathrm{RSS}_r - \mathrm{RSS}_u)/p}{\mathrm{RSS}_u/(n - 2p - 1)}
+\;\overset{H_0}{\sim}\; F(p,\; n-2p-1),
+\qquad H_0:\ b_1 = \dots = b_p = 0,
+```
+
+with the p-value evaluated through the regularized incomplete beta function (continued-fraction
+form). "x Granger-causes y" is the rejection of $H_0$ — x's past improves the prediction of y
+beyond y's own past. **Known limitation — confounding:** if a hidden common cause drives
 both series, Granger reports causality even when no direct edge exists. This is inherent to the
 method, not a defect, and it is exactly why the PC algorithm and LiNGAM are on the roadmap; the
 behavior is pinned by a dedicated test (`TestGrangerFlagsConfounder`) and documented on the
