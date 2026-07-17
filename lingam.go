@@ -357,9 +357,11 @@ func mostExogenous(work [][]float64, remaining []int) (int, error) {
 //	T = (H(xj) + H(r_i^{(j)})) − (H(xi) + H(r_j^{(i)})),
 //
 // where r_i^{(j)} is the OLS residual of xi on xj and r_j^{(i)} that of xj on xi,
-// each standardized before its entropy is taken. A negative T means the xi → xj
-// direction is favored; the caller penalizes only min(0, T)². Returns ErrSingular
-// when a residual collapses to zero (perfect collinearity).
+// each standardized before its entropy is taken. T is the log-likelihood ratio of
+// the two directions: a POSITIVE T favors xi → xj (xi exogenous), a NEGATIVE T is
+// evidence against it (the reverse direction fits better) — which is exactly why
+// the caller penalizes only min(0, T)²: a true root scores ~zero. Returns
+// ErrSingular when a residual collapses to zero (perfect collinearity).
 func lingamDiffMI(xi, xj []float64) (float64, error) {
 	rij, err := lingamPairResidual(xi, xj)
 	if err != nil {
