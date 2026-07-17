@@ -73,3 +73,31 @@ func ExamplePCStable() {
 	// B -> C
 	// undirected edges: 0
 }
+
+// ExampleDirectLiNGAM recovers the direction of a two-variable cause→effect model
+// from observational data. Because the noise is non-Gaussian (uniform), LiNGAM
+// identifies the direction that a constraint-based method could not: it prints the
+// causal order (cause first) and the estimated connection strength. The random
+// draw is seeded for a deterministic result.
+func ExampleDirectLiNGAM() {
+	rng := rand.New(rand.NewSource(1))
+	const n = 3000
+	cause := make([]float64, n)
+	effect := make([]float64, n)
+	for t := 0; t < n; t++ {
+		cause[t] = rng.Float64()*2 - 1                   // uniform, non-Gaussian
+		effect[t] = 1.5*cause[t] + (rng.Float64()*2 - 1) // effect = 1.5·cause + noise
+	}
+
+	res, err := causa.DirectLiNGAM([][]float64{cause, effect}, []string{"cause", "effect"}, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("causal order: %v\n", res.OrderedNodes())
+	fmt.Printf("cause -> effect: %.1f\n", res.Coefficient(0, 1))
+
+	// Output:
+	// causal order: [cause effect]
+	// cause -> effect: 1.5
+}

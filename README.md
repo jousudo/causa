@@ -2,11 +2,11 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.1.0` released.** Granger causality shipped in `v0.1.0`;
-> PC-stable constraint-based discovery is implemented on `main` and ships in `v0.2.0`. Pre-1.0,
-> minor versions may break the API. Nothing below is claimed as shipped until it is implemented,
-> tested against ground-truth datasets, and benchmarked. This README is kept honest by policy:
-> capabilities are labeled exactly as they are.
+> **Status: early development — `v0.2.0` released.** Granger causality shipped in `v0.1.0`;
+> PC-stable constraint-based discovery shipped in `v0.2.0`; DirectLiNGAM directional discovery is
+> implemented on `main` and ships in `v0.3.0`. Pre-1.0, minor versions may break the API. Nothing
+> below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
+> benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
 
 ## What
 
@@ -35,13 +35,15 @@ anywhere Go runs.
 | Capability | Method | Status |
 |---|---|---|
 | Granger causality | Pairwise OLS autoregressions (QR-fitted) + F-test | **Released in `v0.1.0`** — ground-truth-validated and benchmarked; flags confounders by design (see below) |
-| Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Implemented on `main`** (unreleased — ships in `v0.2.0`) — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
-| Directional discovery | LiNGAM (ICA-based, non-Gaussian noise) | Planned |
+| Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Released in `v0.2.0`** — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
+| Directional discovery | DirectLiNGAM (deterministic, non-Gaussian noise) → causal order + weighted DAG | **Implemented on `main`** (unreleased — ships in `v0.3.0`) — ground-truth-validated and benchmarked; identifies a fully directed model when the noise is non-Gaussian (see below) |
 | Interventions / counterfactuals | SEM + do-calculus | Research |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
-precedence" into defensible causal structure. LiNGAM ships next, validated before it is claimed.
+precedence" into defensible causal structure: PC recovers a Markov equivalence class, and
+DirectLiNGAM — where the non-Gaussian-noise assumption holds — pins down the full direction that
+PC must leave reversible.
 
 ### Constraint-based discovery (PC-stable)
 
@@ -68,6 +70,34 @@ correct CI test (the default assumes linear-Gaussian data). On small samples the
 cap: conditioning sets stop growing once `n − |S| − 3 < 1`, so independencies that need larger
 conditioning sets than the sample supports cannot be tested and some edges a larger sample would
 remove may remain.
+
+### Directional discovery (DirectLiNGAM)
+
+`DirectLiNGAM(data, names, opts)` estimates a Linear Non-Gaussian Acyclic Model (LiNGAM) from a
+panel of continuous variables and returns a **full causal order plus the weighted coefficient
+matrix `B`** of the structural model `x = B·x + e`. It is the deterministic DirectLiNGAM method of
+Shimizu et al. (JMLR 2011) — **not** ICA-LiNGAM: there is no random ICA initialization, so, like
+the rest of `causa`, the same input always yields the same output. It iteratively finds the most
+exogenous variable by the paper's entropy-based independence measure (a maximum-entropy negentropy
+approximation built from `E[log cosh]` and `E[x·exp(−x²/2)]` moments), regresses it out of the
+rest, and recurses; the connection strengths are then least-squares estimates on the original data.
+Reused throughout is the same Householder-QR OLS solver as the Granger and PC paths.
+
+**Where PC leaves an edge undirected, LiNGAM directs it.** A chain `A → B → C` and a fork
+`A ← B → C` are one Markov equivalence class — indistinguishable to a constraint-based method — but
+DirectLiNGAM separates them, because non-Gaussian noise breaks the symmetry that made them
+equivalent. The output is a single fully directed DAG, not an equivalence class.
+
+**Assumptions** (stated bluntly because violating them silently returns a plausible but wrong
+model): *linearity*, *acyclicity*, *causal sufficiency*, and — the load-bearing one — *non-Gaussian,
+mutually independent noise* (at most one disturbance may be Gaussian). **On Gaussian noise the model
+is fundamentally unidentifiable**: a linear-Gaussian SEM and its reverse fit the data equally well,
+so the recovered order is arbitrary and meaningless. DirectLiNGAM cannot detect this and returns a
+fully oriented model regardless; a LiNGAM result is only trustworthy when the non-Gaussianity
+assumption genuinely holds. This failure mode is pinned by an honest-failure test. One conscious
+divergence from the reference implementations: coefficient pruning is a simple absolute-magnitude
+threshold (`LiNGAMOptions.PruneThreshold`), not adaptive-lasso, which would require an L1 optimizer
+this stdlib-only library does not carry.
 
 `GrangerTest(cause, effect, lags)` is available since `v0.1.0` (import path
 `github.com/jousudo/causa`). It fits a restricted autoregression of `effect` on its own lags and an unrestricted one

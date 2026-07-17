@@ -97,3 +97,48 @@ func BenchmarkPCStable_p10_n1000(b *testing.B) {
 		}
 	}
 }
+
+// benchLiNGAMData builds a deterministic n-sample non-Gaussian (uniform-noise)
+// linear acyclic SEM over p variables from a fixed random DAG (edges from lower
+// to higher index), so the benchmark measures DirectLiNGAM, not data generation.
+func benchLiNGAMData(seed int64, n, p int) [][]float64 {
+	rng := rand.New(rand.NewSource(seed))
+	w := make([][]float64, p)
+	for i := range w {
+		w[i] = make([]float64, p)
+	}
+	for i := 0; i < p; i++ {
+		for j := i + 1; j < p; j++ {
+			if rng.Float64() < 0.4 {
+				w[i][j] = 0.8
+			}
+		}
+	}
+	data := make([][]float64, p)
+	for i := range data {
+		data[i] = make([]float64, n)
+	}
+	for t := 0; t < n; t++ {
+		for node := 0; node < p; node++ {
+			v := rng.Float64()*2 - 1
+			for parent := 0; parent < node; parent++ {
+				if w[parent][node] != 0 {
+					v += w[parent][node] * data[parent][t]
+				}
+			}
+			data[node][t] = v
+		}
+	}
+	return data
+}
+
+func BenchmarkDirectLiNGAM_p6_n2000(b *testing.B) {
+	data := benchLiNGAMData(7, 2000, 6)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := causa.DirectLiNGAM(data, nil, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
