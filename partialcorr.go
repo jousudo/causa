@@ -47,6 +47,11 @@ type CITest func(data [][]float64, i, j int, cond []int) (pValue float64, err er
 // With an empty conditioning set this reduces to the ordinary Pearson correlation
 // of variables i and j.
 //
+// The data must be rectangular (every variable the same length) with i, j and
+// every index in cond in range; like any Go slice access, malformed input
+// panics. PCStable validates its input before calling the test — the checks are
+// not repeated here.
+//
 // Rank deficiency is detected, not ignored. If the conditioning design is rank
 // deficient (a constant conditioning variable, or collinear conditioners) the
 // underlying solver returns ErrSingular, which is propagated. If either variable

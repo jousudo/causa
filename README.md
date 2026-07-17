@@ -2,10 +2,11 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — pre-`v0.1.0`.** The API is not stable yet, and nothing below
-> is claimed as shipped until it is implemented, tested against ground-truth datasets, and
-> benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they
-> are.
+> **Status: early development — `v0.1.0` released.** Granger causality shipped in `v0.1.0`;
+> PC-stable constraint-based discovery is implemented on `main` and ships in `v0.2.0`. Pre-1.0,
+> minor versions may break the API. Nothing below is claimed as shipped until it is implemented,
+> tested against ground-truth datasets, and benchmarked. This README is kept honest by policy:
+> capabilities are labeled exactly as they are.
 
 ## What
 
@@ -33,8 +34,8 @@ anywhere Go runs.
 
 | Capability | Method | Status |
 |---|---|---|
-| Granger causality | Pairwise OLS autoregressions (QR-fitted) + F-test | **Implemented on `main`** (pre-`v0.1.0`, not yet tagged) — ground-truth-validated and benchmarked; flags confounders by design (see below) |
-| Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Implemented on `main`** (pre-`v0.1.0`, not yet tagged) — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
+| Granger causality | Pairwise OLS autoregressions (QR-fitted) + F-test | **Released in `v0.1.0`** — ground-truth-validated and benchmarked; flags confounders by design (see below) |
+| Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Implemented on `main`** (unreleased — ships in `v0.2.0`) — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
 | Directional discovery | LiNGAM (ICA-based, non-Gaussian noise) | Planned |
 | Interventions / counterfactuals | SEM + do-calculus | Research |
 
@@ -68,9 +69,8 @@ cap: conditioning sets stop growing once `n − |S| − 3 < 1`, so independencie
 conditioning sets than the sample supports cannot be tested and some edges a larger sample would
 remove may remain.
 
-`GrangerTest(cause, effect, lags)` is available now (import path `github.com/jousudo/causa`),
-though the module is still pre-`v0.1.0` and unreleased, so the API may change before it is
-tagged. It fits a restricted autoregression of `effect` on its own lags and an unrestricted one
+`GrangerTest(cause, effect, lags)` is available since `v0.1.0` (import path
+`github.com/jousudo/causa`). It fits a restricted autoregression of `effect` on its own lags and an unrestricted one
 that adds `cause`'s lags, both via a Householder-QR least-squares solver, and reports the
 F-statistic and its p-value. **Known limitation — confounding:** if a hidden common cause drives
 both series, Granger reports causality even when no direct edge exists. This is inherent to the
@@ -93,18 +93,14 @@ function so it is never mistaken for a true causal claim.
 
 ## Installation
 
-Once `v0.1.0` is tagged:
-
 ```bash
 go get github.com/jousudo/causa
 ```
 
-Until then, the module is public for visibility and review, not yet for consumption.
-
 ## Contributing
 
-Issues and discussion are welcome from day one. Code contributions will be easiest to accept
-after `v0.1.0` stabilizes the core API. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+Issues, discussion and code contributions are welcome; note that pre-1.0, minor versions may
+still adjust the API. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
 stdlib-only constraint, godoc/Example/benchmark expectations, and PR etiquette.
 
 ## License
