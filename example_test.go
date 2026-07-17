@@ -39,3 +39,37 @@ func ExampleGrangerTest() {
 	// cause -> effect: significant=true
 	// effect -> cause: significant=false
 }
+
+// ExamplePCStable recovers the structure of a collider A -> C <- B from
+// observational data. A and B are independent causes of C; because they are
+// marginally independent, the PC algorithm orients the v-structure, printing
+// both compelled arrowheads into C. The random draw is seeded for a deterministic
+// result.
+func ExamplePCStable() {
+	rng := rand.New(rand.NewSource(3))
+	const n = 5000
+	a := make([]float64, n)
+	b := make([]float64, n)
+	c := make([]float64, n)
+	for t := 0; t < n; t++ {
+		a[t] = rng.NormFloat64()
+		b[t] = rng.NormFloat64()
+		c[t] = 0.8*a[t] + 0.8*b[t] + rng.NormFloat64()
+	}
+
+	g, err := causa.PCStable([][]float64{a, b, c}, []string{"A", "B", "C"}, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, e := range g.DirectedEdges() {
+		nodes := g.Nodes()
+		fmt.Printf("%s -> %s\n", nodes[e.From], nodes[e.To])
+	}
+	fmt.Printf("undirected edges: %d\n", len(g.UndirectedEdges()))
+
+	// Output:
+	// A -> C
+	// B -> C
+	// undirected edges: 0
+}
