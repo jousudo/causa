@@ -142,3 +142,31 @@ func BenchmarkDirectLiNGAM_p6_n2000(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkFitSEM_p6_n2000(b *testing.B) {
+	data := benchLiNGAMData(7, 2000, 6)
+	order := []int{0, 1, 2, 3, 4, 5} // benchLiNGAMData edges run low->high index
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := causa.FitSEM(data, nil, order); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkIntervene_p6(b *testing.B) {
+	data := benchLiNGAMData(7, 2000, 6)
+	s, err := causa.FitSEM(data, nil, []int{0, 1, 2, 3, 4, 5})
+	if err != nil {
+		b.Fatal(err)
+	}
+	do := map[string]float64{"V0": 1}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := s.Intervene(do); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

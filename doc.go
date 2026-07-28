@@ -1,7 +1,7 @@
 // Package causa provides causal inference and causal discovery for time
 // series in pure Go (standard library only, CGO-free).
 //
-// Status: early development — v0.3.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.4.0 released; pre-v1.0, minor versions may
 // still change the API.
 //
 // Implemented:
@@ -16,9 +16,17 @@
 //     (DirectLiNGAM) for linear acyclic models with non-Gaussian independent
 //     noise, recovering a full causal order and weighted coefficient matrix.
 //     Released in v0.3.0.
+//   - Interventions and counterfactuals — a linear structural equation model
+//     (SEM, FitSEM) with the do-operator: interventional expectations
+//     (Intervene), total causal effects (TotalEffect) and counterfactuals
+//     (Counterfactual) by Pearl's abduction–action–prediction. Released in
+//     v0.4.0. Exact for a fully specified linear SEM (e.g. one DirectLiNGAM
+//     recovered); the general do-calculus IDENTIFICATION problem with latent
+//     confounders remains research.
 //
-// Research: interventions and counterfactuals via SEM + do-calculus. See the
-// README for the honest roadmap and the assumptions each method rests on: no
-// capability is claimed before it is implemented, validated against
-// ground-truth datasets, and benchmarked.
+// Research: general do-calculus identification (recovering interventional from
+// observational distributions under latent confounding). See the README for the
+// honest roadmap and the assumptions each method rests on: no capability is
+// claimed before it is implemented, validated against ground-truth datasets, and
+// benchmarked.
 package causa

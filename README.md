@@ -2,9 +2,10 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.3.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.4.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
-> `v0.3.0`. Pre-1.0, minor versions may break the API. Nothing
+> `v0.3.0`, and linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`.
+> Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
 
@@ -37,7 +38,7 @@ anywhere Go runs.
 | Granger causality | Pairwise OLS autoregressions (QR-fitted) + F-test | **Released in `v0.1.0`** — ground-truth-validated and benchmarked; flags confounders by design (see below) |
 | Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Released in `v0.2.0`** — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
 | Directional discovery | DirectLiNGAM (deterministic, non-Gaussian noise) → causal order + weighted DAG | **Released in `v0.3.0`** — ground-truth-validated and benchmarked; identifies a fully directed model when the noise is non-Gaussian (see below) |
-| Interventions / counterfactuals | SEM + do-calculus | Research |
+| Interventions / counterfactuals | Linear SEM + do-operator (forward substitution; Pearl abduction–action–prediction) | **Released in `v0.4.0`** — exact for a fully specified linear SEM; the general do-calculus *identification* problem (latent confounders) remains research (see below) |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
@@ -146,6 +147,65 @@ assumption genuinely holds. This failure mode is pinned by an honest-failure tes
 divergence from the reference implementations: coefficient pruning is a simple absolute-magnitude
 threshold (`LiNGAMOptions.PruneThreshold`), not adaptive-lasso, which would require an L1 optimizer
 this stdlib-only library does not carry.
+
+### Interventions and counterfactuals (SEM + do-operator)
+
+`NewSEM(names, B, intercept)` and `FitSEM(data, names, order)` build a linear structural equation
+model
+
+```math
+x = c + B\,x + e,
+```
+
+with $B$ acyclic — $B_{ij}$ is the direct causal effect of $x_j$ on $x_i$, non-zero only when $j$
+precedes $i$ in a causal order — an intercept vector $c$, and mutually independent, mean-zero
+disturbances $e$. `NewSEM` takes a hand-specified matrix (and topologically sorts it, rejecting a
+cycle); `FitSEM` estimates $B$ and $c$ from data by regressing each variable on its predecessors in a
+given causal order via the same Householder-QR solver as the rest of the library. The order a
+DirectLiNGAM run recovers is exactly such an input, so **discovery and intervention compose**:
+`FitSEM(data, r.Nodes(), r.CausalOrder())`.
+
+**The do-operator.** `Intervene(do)` returns the interventional expectation $\mathbb{E}[x \mid
+\mathrm{do}(x_S = \xi_S)]$. Fixing the intervened variables severs their incoming edges; every other
+variable takes its structural mean given its parents. In causal order this is a single forward
+substitution,
+
+```math
+\mathbb{E}[x_i \mid \mathrm{do}(\cdot)] =
+\begin{cases}
+\xi_i & i \in S,\\[2pt]
+c_i + \sum_j B_{ij}\,\mathbb{E}[x_j \mid \mathrm{do}(\cdot)] & i \notin S,
+\end{cases}
+```
+
+equivalently the reduced form $x = (I - B)^{-1}(c + e)$ with the intervened components clamped.
+`TotalEffect(from, to)` returns the total causal effect — the sum over every directed path of the
+product of its edge coefficients, the $(I-B)^{-1}$ entry — computed as $\mathbb{E}[\text{to} \mid
+\mathrm{do}(\text{from}=1)] - \mathbb{E}[\text{to} \mid \mathrm{do}(\text{from}=0)]$.
+
+**Counterfactuals.** `Counterfactual(observed, do)` answers "given that we *observed* $x$, what would
+$x$ have been had we done $\mathrm{do}$?" by Pearl's abduction–action–prediction:
+
+```math
+\underbrace{e = (I - B)\,x_{\text{obs}} - c}_{\text{abduction}},
+\qquad
+\underbrace{\text{fix } \mathrm{do}\text{-vars, cut their in-edges}}_{\text{action}},
+\qquad
+\underbrace{x'_i = c_i + \sum_j B_{ij}\,x'_j + e_i}_{\text{prediction}},
+```
+
+re-propagating the structural equations while holding the abducted disturbances fixed. With an empty
+intervention the counterfactual reproduces the observation exactly — the consistency the method
+satisfies by construction.
+
+**Scope** (stated bluntly, as everywhere here). This is the *identified* linear-SEM case: it assumes
+you already hold the full structural model — every direct effect and the acyclic structure. It does
+**not** solve the general do-calculus *identification* problem — recovering an interventional
+distribution from an *observational* one plus a partially known graph with **latent confounders**
+(Pearl's do-calculus rules and the ID algorithm) — which remains research. What ships is exact for a
+fully specified linear SEM, where interventions and counterfactuals reduce to forward substitution
+through the structural equations. Linearity, acyclicity and causal sufficiency carry over from the
+model you supply; a mis-specified $B$ returns a plausible but wrong answer, silently.
 
 ### Granger causality
 

@@ -179,3 +179,40 @@ func ExampleFisherZTest() {
 	// marginal dependence significant (p < 1e-6):    true
 	// given Z the signal collapses (pCond >> pMarg): true
 }
+
+// ExampleSEM shows the do-operator and a counterfactual on a fully specified
+// linear structural model X -> Y -> Z (Y = 2X, Z = 3Y). Interventions and
+// counterfactuals reduce to forward substitution through the structural
+// equations, so the answers are exact and deterministic.
+func ExampleSEM() {
+	coef := [][]float64{
+		{0, 0, 0}, // X is a root
+		{2, 0, 0}, // Y = 2·X
+		{0, 3, 0}, // Z = 3·Y
+	}
+	s, err := causa.NewSEM([]string{"X", "Y", "Z"}, coef, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	// Intervention: force X = 1 and read the interventional expectation.
+	got, _ := s.Intervene(map[string]float64{"X": 1})
+	fmt.Printf("do(X=1): Y=%.0f Z=%.0f\n", got["Y"], got["Z"])
+
+	// Total effect of X on Z along the chain (2 × 3).
+	te, _ := s.TotalEffect("X", "Z")
+	fmt.Printf("total effect X->Z: %.0f\n", te)
+
+	// Counterfactual: we OBSERVED (X=1, Y=3, Z=8) — Y and Z carry disturbances.
+	// Had X been 5 instead, holding the same disturbances, what would follow?
+	cf, _ := s.Counterfactual(
+		map[string]float64{"X": 1, "Y": 3, "Z": 8},
+		map[string]float64{"X": 5},
+	)
+	fmt.Printf("counterfactual do(X=5): Y=%.0f Z=%.0f\n", cf["Y"], cf["Z"])
+
+	// Output:
+	// do(X=1): Y=2 Z=6
+	// total effect X->Z: 6
+	// counterfactual do(X=5): Y=11 Z=32
+}
