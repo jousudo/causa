@@ -288,3 +288,34 @@ func BenchmarkEvaluatePAG(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkEvaluateGaussian_frontdoorChain(b *testing.B) {
+	// Generalized front door X→M1→M2→Y with a latent X↔Y: the c-component estimand
+	// is a product of conditionals and marginals, evaluated as a Gaussian factor.
+	g, err := causa.NewDiagram([]string{"X", "M1", "M2", "Y"},
+		[][2]int{{0, 1}, {1, 2}, {2, 3}}, [][2]int{{0, 3}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	r, err := causa.Identify(g, []int{3}, []int{0})
+	if err != nil {
+		b.Fatal(err)
+	}
+	cov := [][]float64{
+		{2.0, 0.8, 0.5, 0.9},
+		{0.8, 2.0, 0.7, 0.6},
+		{0.5, 0.7, 2.0, 0.8},
+		{0.9, 0.6, 0.8, 2.0},
+	}
+	joint, err := causa.NewGaussian(make([]float64, 4), cov)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := r.Estimand.EvaluateGaussian(joint); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

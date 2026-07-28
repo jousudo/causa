@@ -2,15 +2,16 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.10.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.11.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
 > `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
 > FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, the Shpitser–Pearl ID
 > algorithm for causal-effect identification in `v0.6.0`, the IDC algorithm for
 > conditional-effect identification in `v0.7.0`, the IDP algorithm for
 > identification over a PAG (an equivalence class) in `v0.8.0`, the CIDP
-> algorithm for conditional identification over a PAG in `v0.9.0`, and numeric
-> evaluation of the PAG estimand in `v0.10.0`.
+> algorithm for conditional identification over a PAG in `v0.9.0`, numeric
+> evaluation of the PAG estimand in `v0.10.0`, and continuous (linear-Gaussian)
+> estimand evaluation in `v0.11.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -51,6 +52,9 @@ anywhere Go runs.
 | Identification over an equivalence class | Jaber–Zhang–Bareinboim IDP (pc-components + regions, Prop. 6/7 over induced PAGs) | **Released in `v0.8.0`** — decides identifiability of `P(y \| do(x))` from a **PAG** (what FCI returns), not a single asserted diagram; decision cross-checked case-for-case against the reference `PAGId` implementation; symbolic (render-only) estimand; assumes no selection bias (see below) |
 | Conditional identification over an equivalence class | Jaber–Zhang–Bareinboim CIDP (PAG do-calculus Rule 2 + definite-status m-separation + IDP) | **Released in `v0.9.0`** — decides identifiability of `P(y \| do(x), z)` from a **PAG**, the contextual effect; decision cross-checked against `PAGId::CIDP`; assumes no selection bias (see below) |
 | Numeric evaluation of a PAG effect | Discrete evaluator over the identified IDP/CIDP estimand | **Released in `v0.10.0`** — turns an identified PAG effect into the interventional table `P(y \| do(x)[, z])` from a discrete joint; validated against brute-force truth on random latent SCMs (PAG per SCM via an oracle FCI) |
+| Continuous (linear-Gaussian) evaluation | Canonical-form Gaussian factor algebra over the identified estimand (`Expr.EvaluateGaussian`) | **Released in `v0.11.0`** — evaluates an identified estimand on a *normal* observational joint, returning `P(y \| do(x))` as a Gaussian; exact for a linear-Gaussian model; validated against the closed-form structural effect (`SEM.TotalEffect`) on random latent SCMs |
+| Uncertainty quantification | Bootstrap confidence intervals over the evaluated effect | Planned (`v0.12.0`) — turns a point estimate into an estimate ± robustness |
+| Selection bias | Zhang's rules R5–R7 in FCI + selection in IDP/CIDP identification | Research (`v0.13.0`) — the largest, most independent step; least immediate value, highest risk |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
@@ -421,6 +425,46 @@ the SCM's equivalence class implies), the observational joint and the true `P(y 
 computed by marginalizing latents and intervening, and the evaluated estimand is required to match —
 across random parameterizations, including latent-confounded, Prop-6-heavy estimands. As with
 `Expr.Evaluate`, the evaluator is for **discrete** joints.
+
+### Continuous (linear-Gaussian) evaluation
+
+`Expr.EvaluateGaussian(joint)` is the continuous companion to `Expr.Evaluate`: where the discrete
+evaluator reads a probability table, this reads a **normal** observational joint `N(μ, Σ)`
+(`NewGaussian`) and returns `P(y | do(x))` as a Gaussian, **exact for a linear-Gaussian model**. It
+is the estimand backend most telemetry needs — continuous metrics rather than binned states.
+
+The identified estimand is the *same* symbolic `Expr` the ID/IDC algorithms produce; only the numeric
+backend changes. A Gaussian factor in **canonical (information) form** — `φ(x) = exp(−½·xᵀ K x + hᵀx + g)`
+— closes exactly the three operations an estimand is built from: products **add** `(K, h, g)`, a
+conditional's ratio **subtracts** them, and marginalizing a variable block out is a **Schur
+complement**. So `EvaluateGaussian` walks the same AST as `Evaluate`, swapping dense tables for
+Gaussian factors. The result is a `GaussianFactor` over the query's free variables `Y ∪ X`; fix the
+intervention with `Condition` to read the outcome's mean and covariance:
+
+```go
+r, _ := causa.Identify(g, []int{y}, []int{x})    // identifiable
+f, _ := r.Estimand.EvaluateGaussian(joint)       // joint is a *GaussianDistribution N(μ, Σ)
+hi, _ := f.Condition(map[int]float64{x: 1})       // P(Y | do(X=1)) as a Gaussian
+lo, _ := f.Condition(map[int]float64{x: 0})       // P(Y | do(X=0))
+m1, _ := hi.MeanAt(y)
+m0, _ := lo.MeanAt(y)                              // m1 − m0 is the causal slope dE[Y|do(X)]/dX
+```
+
+The interventional distribution `P(y | do(x))` is a distribution over `y` **for each fixed** `x`, so
+the estimand factor is proper in the outcome but flat in the intervention (its `x`-block is degenerate
+by design) — never marginalize `x` out; `Condition` on it. A degenerate input joint, or an
+intermediate factor whose eliminated block is not positive definite, is reported as
+`ErrNotPositiveDefinite` rather than silently returning garbage — the Cholesky factorization that
+drives the algebra doubles as the positive-definiteness test.
+
+**Validation.** Correctness is checked against **closed-form structural truth** on random
+**linear-Gaussian latent SCMs**, the continuous analogue of the discrete SCM harness: for each diagram
+a random linear-Gaussian model is drawn (one latent root per bidirected edge), the exact observed
+covariance `Σ = (I−B)⁻¹ Ω (I−B)⁻ᵀ` is formed, and the interventional slope read off the evaluated
+estimand is required to match the structural total effect the independent `SEM.TotalEffect` do-operator
+path computes — across random parameterizations, over back-door and (latent-confounded) front-door
+estimands. **Scope.** Exact for a linear-Gaussian model given the *distribution*; estimating `Σ` from
+finite samples and quantifying the resulting uncertainty is `v0.12.0` (bootstrap).
 
 ### Granger causality
 

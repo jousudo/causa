@@ -1,7 +1,7 @@
 // Package causa provides causal inference and causal discovery for time
 // series in pure Go (standard library only, CGO-free).
 //
-// Status: early development — v0.10.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.11.0 released; pre-v1.0, minor versions may
 // still change the API.
 //
 // Implemented:
@@ -61,9 +61,18 @@
 //     from a discrete observational joint, the discrete-data companion to the
 //     symbolic decision. Validated against brute-force truth on random latent SCMs
 //     (with the PAG derived from each SCM by an oracle FCI). Released in v0.10.0.
+//   - Continuous (linear-Gaussian) evaluation — Expr.EvaluateGaussian evaluates an
+//     identified estimand against a normal observational joint (NewGaussian),
+//     returning P(y | do(x)) as a Gaussian factor (GaussianFactor) over the query's
+//     free variables; fix the intervention with Condition to read the outcome's
+//     mean and covariance. A canonical-form Gaussian factor algebra (product,
+//     division, Schur-complement marginalization) walks the same estimand AST as the
+//     discrete Evaluate, exact for a linear-Gaussian model. Validated against the
+//     closed-form structural effect (SEM.TotalEffect) on random latent SCMs, over
+//     back-door and front-door estimands. Released in v0.11.0.
 //
-// Research: identification under selection bias, and estimation of the identified
-// estimand from continuous samples. See the README for the honest
+// Research: identification under selection bias, and uncertainty quantification of
+// the evaluated estimand from finite samples. See the README for the honest
 // roadmap and the assumptions each method rests on: no capability is claimed
 // before it is implemented, validated against ground-truth datasets, and
 // benchmarked.

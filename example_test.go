@@ -429,3 +429,34 @@ func ExamplePAGIDResult_Evaluate() {
 	// P(Y=1 | do(X=1)) = 0.9000
 	// P(Y=1 | do(X=0)) = 0.3000
 }
+
+// ExampleExpr_EvaluateGaussian evaluates an identified estimand on a continuous,
+// linear-Gaussian observational distribution — the continuous companion to the
+// discrete Evaluate. It deconfounds a back-door: the structural effect of X on Y is
+// 2, while the naive regression slope Cov(X,Y)/Var(X) = 5/2 = 2.5 is biased by the
+// observed common cause Z. The adjustment recovers the causal 2.
+func ExampleExpr_EvaluateGaussian() {
+	// Back-door: X → Y confounded by an OBSERVED Z (Z → X, Z → Y). X=0, Y=1, Z=2.
+	g, _ := causa.NewDiagram([]string{"X", "Y", "Z"},
+		[][2]int{{0, 1}, {2, 0}, {2, 1}}, nil)
+	r, _ := causa.Identify(g, []int{1}, []int{0})
+
+	// The observational joint N(0, Σ) implied by Z→X, Z→Y and X→Y (with unit noise);
+	// its X→Y structural coefficient is 2.
+	joint, _ := causa.NewGaussian([]float64{0, 0, 0}, [][]float64{
+		{2, 5, 1},
+		{5, 14, 3},
+		{1, 3, 1},
+	})
+	f, _ := r.Estimand.EvaluateGaussian(joint)
+
+	// P(Y | do(X)) is linear in X, so a unit step gives the causal slope.
+	hi, _ := f.Condition(map[int]float64{0: 1})
+	lo, _ := f.Condition(map[int]float64{0: 0})
+	m1, _ := hi.MeanAt(1)
+	m0, _ := lo.MeanAt(1)
+	fmt.Printf("dE[Y | do(X)]/dX = %.4f\n", m1-m0)
+
+	// Output:
+	// dE[Y | do(X)]/dX = 2.0000
+}
