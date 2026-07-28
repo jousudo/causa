@@ -2,7 +2,7 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.11.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.12.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
 > `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
 > FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, the Shpitser–Pearl ID
@@ -10,8 +10,9 @@ Causal inference for Go. Pure standard library. Zero dependencies.
 > conditional-effect identification in `v0.7.0`, the IDP algorithm for
 > identification over a PAG (an equivalence class) in `v0.8.0`, the CIDP
 > algorithm for conditional identification over a PAG in `v0.9.0`, numeric
-> evaluation of the PAG estimand in `v0.10.0`, and continuous (linear-Gaussian)
-> estimand evaluation in `v0.11.0`.
+> evaluation of the PAG estimand in `v0.10.0`, continuous (linear-Gaussian)
+> estimand evaluation in `v0.11.0`, and bootstrap uncertainty quantification of the
+> evaluated effect in `v0.12.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -53,7 +54,7 @@ anywhere Go runs.
 | Conditional identification over an equivalence class | Jaber–Zhang–Bareinboim CIDP (PAG do-calculus Rule 2 + definite-status m-separation + IDP) | **Released in `v0.9.0`** — decides identifiability of `P(y \| do(x), z)` from a **PAG**, the contextual effect; decision cross-checked against `PAGId::CIDP`; assumes no selection bias (see below) |
 | Numeric evaluation of a PAG effect | Discrete evaluator over the identified IDP/CIDP estimand | **Released in `v0.10.0`** — turns an identified PAG effect into the interventional table `P(y \| do(x)[, z])` from a discrete joint; validated against brute-force truth on random latent SCMs (PAG per SCM via an oracle FCI) |
 | Continuous (linear-Gaussian) evaluation | Canonical-form Gaussian factor algebra over the identified estimand (`Expr.EvaluateGaussian`) | **Released in `v0.11.0`** — evaluates an identified estimand on a *normal* observational joint, returning `P(y \| do(x))` as a Gaussian; exact for a linear-Gaussian model; validated against the closed-form structural effect (`SEM.TotalEffect`) on random latent SCMs |
-| Uncertainty quantification | Bootstrap confidence intervals over the evaluated effect | Planned (`v0.12.0`) — turns a point estimate into an estimate ± robustness |
+| Uncertainty quantification | Nonparametric bootstrap over the evaluated effect (`Bootstrap`, `Expr.BootstrapGaussianEffect`) + distribution fitting (`SampleGaussian`, `SampleDistribution`) | **Released in `v0.12.0`** — resamples the data to turn a point-estimated causal effect into a confidence interval; validated by its *coverage* on known linear-Gaussian SCMs (a nominal 95% interval covers the truth ≈95% of the time) |
 | Selection bias | Zhang's rules R5–R7 in FCI + selection in IDP/CIDP identification | Research (`v0.13.0`) — the largest, most independent step; least immediate value, highest risk |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
@@ -465,6 +466,40 @@ estimand is required to match the structural total effect the independent `SEM.T
 path computes — across random parameterizations, over back-door and (latent-confounded) front-door
 estimands. **Scope.** Exact for a linear-Gaussian model given the *distribution*; estimating `Σ` from
 finite samples and quantifying the resulting uncertainty is `v0.12.0` (bootstrap).
+
+### Uncertainty quantification (bootstrap)
+
+Everything above evaluates an estimand on a *known* distribution. On real data you hold a finite
+sample, so the effect is an estimate with sampling error. `v0.12.0` closes that gap with a
+nonparametric bootstrap: resample the rows with replacement, recompute the effect on each resample,
+and read a confidence interval off the spread — turning "the number" into "the number ± robustness".
+
+Two primitives bridge raw data to the evaluators (a gap until now — nothing fit a distribution from
+samples): `SampleGaussian(data)` fits a normal by its sample mean and covariance (for
+`EvaluateGaussian`), and `SampleDistribution(data, card)` builds an empirical joint (for `Evaluate`).
+`Expr.BootstrapGaussianEffect` composes the whole continuous path — fit → evaluate → unit contrast —
+into an interval for the causal slope `dE[y | do(x)]/dx`:
+
+```go
+r, _ := causa.Identify(g, []int{y}, []int{x})   // identifiable back-door / front-door query
+ci, _ := r.Estimand.BootstrapGaussianEffect(data, x, y,
+    causa.BootstrapOptions{Resamples: 1000, Level: 0.95, Seed: 1})
+fmt.Printf("effect %.3f, 95%% CI [%.3f, %.3f]\n", ci.Point, ci.Lower, ci.Upper)
+significant := ci.Lower > 0 || ci.Upper < 0   // does the interval exclude no-effect?
+```
+
+The engine underneath, `Bootstrap(n, stat, opts)`, is general: it resamples `n` row indices and calls
+your `stat` closure, so it bootstraps *any* scalar — a discrete `P(y | do(x))`, a regression slope,
+whatever `stat` returns — not just the Gaussian effect. A degenerate resample (say a collinear draw
+with no positive-definite covariance) is skipped; the percentile interval and a bootstrap standard
+error come back in a `BootstrapResult`.
+
+**Validation.** A confidence interval is judged by its **coverage**: on a known linear-Gaussian SCM
+with a known true effect, we draw many fresh samples, build a 95% interval from each, and count how
+often it contains the truth — it lands near 95% (≈0.93 here, honestly slightly conservative for the
+percentile method), across back-door and latent-confounded front-door effects. **Scope.** This is the
+basic percentile bootstrap — no bias-correction/acceleration (BCa) — under an i.i.d.-rows assumption;
+it quantifies sampling variability, not model misspecification.
 
 ### Granger causality
 

@@ -319,3 +319,34 @@ func BenchmarkEvaluateGaussian_frontdoorChain(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkBootstrapGaussianEffect_backdoor(b *testing.B) {
+	// Back-door SCM data (Z→X, Z→Y, X→Y); 200 resamples of a 500-row sample.
+	rng := rand.New(rand.NewSource(1))
+	const n = 500
+	x := make([]float64, n)
+	y := make([]float64, n)
+	z := make([]float64, n)
+	for i := 0; i < n; i++ {
+		zi := rng.NormFloat64()
+		xi := zi + rng.NormFloat64()
+		z[i], x[i], y[i] = zi, xi, 2*xi+zi+rng.NormFloat64()
+	}
+	data := [][]float64{x, y, z}
+	g, err := causa.NewDiagram([]string{"X", "Y", "Z"}, [][2]int{{0, 1}, {2, 0}, {2, 1}}, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	r, err := causa.Identify(g, []int{1}, []int{0})
+	if err != nil {
+		b.Fatal(err)
+	}
+	opts := causa.BootstrapOptions{Resamples: 200, Seed: 1}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := r.Estimand.BootstrapGaussianEffect(data, 0, 1, opts); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

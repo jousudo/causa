@@ -1,7 +1,7 @@
 // Package causa provides causal inference and causal discovery for time
 // series in pure Go (standard library only, CGO-free).
 //
-// Status: early development — v0.11.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.12.0 released; pre-v1.0, minor versions may
 // still change the API.
 //
 // Implemented:
@@ -70,9 +70,16 @@
 //     discrete Evaluate, exact for a linear-Gaussian model. Validated against the
 //     closed-form structural effect (SEM.TotalEffect) on random latent SCMs, over
 //     back-door and front-door estimands. Released in v0.11.0.
+//   - Uncertainty quantification — a nonparametric bootstrap (Bootstrap) turns a
+//     point-estimated effect into a confidence interval by resampling the data,
+//     with SampleGaussian / SampleDistribution to fit an observational distribution
+//     from raw samples and Expr.BootstrapGaussianEffect composing the whole
+//     continuous path (fit → evaluate → contrast) into an interval for the causal
+//     slope. Validated by its coverage on known linear-Gaussian SCMs — a nominal
+//     95% interval covers the true effect about 95% of the time. Released in
+//     v0.12.0.
 //
-// Research: identification under selection bias, and uncertainty quantification of
-// the evaluated estimand from finite samples. See the README for the honest
+// Research: identification under selection bias. See the README for the honest
 // roadmap and the assumptions each method rests on: no capability is claimed
 // before it is implemented, validated against ground-truth datasets, and
 // benchmarked.

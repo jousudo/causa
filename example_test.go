@@ -460,3 +460,38 @@ func ExampleExpr_EvaluateGaussian() {
 	// Output:
 	// dE[Y | do(X)]/dX = 2.0000
 }
+
+// ExampleExpr_BootstrapGaussianEffect turns the point estimate of a causal effect
+// into an effect ± robustness: a bootstrap confidence interval. It simulates a
+// back-door SCM whose true X→Y effect is 2 (the naive regression slope would be a
+// confounded ~2.5), then resamples the data to bound the identified, deconfounded
+// estimate.
+func ExampleExpr_BootstrapGaussianEffect() {
+	// Simulate rows from Z→X, Z→Y and the causal X→Y of coefficient 2. X=0, Y=1, Z=2.
+	rng := rand.New(rand.NewSource(1))
+	const n = 3000
+	X := make([]float64, n)
+	Y := make([]float64, n)
+	Z := make([]float64, n)
+	for i := 0; i < n; i++ {
+		z := rng.NormFloat64()
+		x := z + rng.NormFloat64()
+		y := 2*x + z + rng.NormFloat64()
+		Z[i], X[i], Y[i] = z, x, y
+	}
+	data := [][]float64{X, Y, Z}
+
+	g, _ := causa.NewDiagram([]string{"X", "Y", "Z"}, [][2]int{{0, 1}, {2, 0}, {2, 1}}, nil)
+	r, _ := causa.Identify(g, []int{1}, []int{0})
+	ci, _ := r.Estimand.BootstrapGaussianEffect(data, 0, 1,
+		causa.BootstrapOptions{Resamples: 500, Level: 0.95, Seed: 7})
+
+	fmt.Printf("effect estimate ≈ %.2f\n", ci.Point)
+	fmt.Println("95% CI contains the true effect 2:", ci.Lower <= 2 && 2 <= ci.Upper)
+	fmt.Println("95% CI excludes 0 (effect is significant):", ci.Lower > 0)
+
+	// Output:
+	// effect estimate ≈ 1.99
+	// 95% CI contains the true effect 2: true
+	// 95% CI excludes 0 (effect is significant): true
+}
