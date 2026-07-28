@@ -436,14 +436,17 @@ func (g *PAG) isBidirected(i, j int) bool {
 // A visible edge behaves like an ordinary directed edge of a DAG for
 // identification; an invisible one may hide confounding. Evaluated on the whole
 // graph, never an induced subgraph.
-func (g *PAG) visibleEdge(x, z int) bool {
-	n := g.Order()
+func (g *PAG) visibleEdge(x, z int) bool { return visibleEdgePAG(g.mark, g.Order(), x, z) }
+
+// visibleEdgePAG is visibleEdge over an explicit mark matrix, so it can be run on a
+// MANIPULATED PAG (as do-calculus Rule 2 needs) and not only on g.mark.
+func visibleEdgePAG(m [][]Mark, n, x, z int) bool {
 	// Scenario 1: ∃ c with c *→ x (arrowhead at x) and c not adjacent to z.
 	for c := 0; c < n; c++ {
 		if c == x || c == z {
 			continue
 		}
-		if fciAdjacent(g.mark, x, c) && isArrow(g.mark, x, c) && !fciAdjacent(g.mark, z, c) {
+		if fciAdjacent(m, x, c) && isArrow(m, x, c) && !fciAdjacent(m, z, c) {
 			return true
 		}
 	}
@@ -452,8 +455,9 @@ func (g *PAG) visibleEdge(x, z int) bool {
 		if c == x || c == z {
 			continue
 		}
-		if g.isBidirected(x, c) && isTail(g.mark, c, z) && isArrow(g.mark, z, c) {
-			if g.minDiscrPathExists(c, x, z) {
+		bidir := isArrow(m, x, c) && isArrow(m, c, x)
+		if bidir && isTail(m, c, z) && isArrow(m, z, c) {
+			if minDiscrPathExistsPAG(m, n, c, x, z) {
 				return true
 			}
 		}
@@ -461,14 +465,13 @@ func (g *PAG) visibleEdge(x, z int) bool {
 	return false
 }
 
-// minDiscrPathExists reports whether a minimal discriminating path exists for the
+// minDiscrPathExistsPAG reports whether a minimal discriminating path exists for the
 // triple ⟨a, b, c⟩ (a the collider vertex adjacent to b, c the far endpoint),
 // ported from pcalg::minDiscrPath — only its existence matters to visibleEdge. The
 // search grows collider paths back from a: every interior vertex must be a collider
 // on the path AND a parent of c, terminating when it reaches a vertex not adjacent
 // to c.
-func (g *PAG) minDiscrPathExists(a, b, c int) bool {
-	n := g.Order()
+func minDiscrPathExistsPAG(m [][]Mark, n, a, b, c int) bool {
 	visited := make([]bool, n)
 	visited[a], visited[b], visited[c] = true, true, true
 
@@ -478,7 +481,7 @@ func (g *PAG) minDiscrPathExists(a, b, c int) bool {
 		if visited[d] {
 			continue
 		}
-		if fciAdjacent(g.mark, a, d) && isArrow(g.mark, a, d) { // d *→ a
+		if fciAdjacent(m, a, d) && isArrow(m, a, d) { // d *→ a
 			list = append(list, []int{a, d})
 		}
 	}
@@ -486,19 +489,19 @@ func (g *PAG) minDiscrPathExists(a, b, c int) bool {
 		mpath := list[0]
 		list = list[1:]
 		d := mpath[len(mpath)-1]
-		if !fciAdjacent(g.mark, c, d) { // d not adjacent to c: discriminating path found
+		if !fciAdjacent(m, c, d) { // d not adjacent to c: discriminating path found
 			return true
 		}
 		pred := mpath[len(mpath)-2]
 		// d → c (tail at d, arrow at c) and pred *→ d (d a collider): extend.
-		if isTail(g.mark, d, c) && isArrow(g.mark, c, d) && isArrow(g.mark, d, pred) {
+		if isTail(m, d, c) && isArrow(m, c, d) && isArrow(m, d, pred) {
 			visited[d] = true
 			base := mpath[1:] // drop the first element, as pcalg does
 			for r := 0; r < n; r++ {
 				if r == d || visited[r] {
 					continue
 				}
-				if fciAdjacent(g.mark, d, r) && isArrow(g.mark, d, r) { // r *→ d
+				if fciAdjacent(m, d, r) && isArrow(m, d, r) { // r *→ d
 					np := append(append([]int(nil), base...), r)
 					list = append(list, np)
 				}

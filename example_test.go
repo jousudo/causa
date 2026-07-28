@@ -345,3 +345,34 @@ func ExampleIdentifyPAG() {
 	// Z<->X->Y  identifiable: true
 	// X o-> Y    identifiable: false
 }
+
+// ExampleIdentifyConditionalPAG identifies a CONDITIONAL effect P(y | do(x), z) — the
+// effect of x on y within the context z — from a PAG rather than a single diagram.
+// It shows the honest subtlety of equivalence-class reasoning: the same directed
+// chain that would be identifiable as an asserted DAG is NOT identifiable as a PAG,
+// because there its edges are invisible and the class admits hidden confounding.
+func ExampleIdentifyConditionalPAG() {
+	// Z o→ X → Y: Z's arrowhead into X makes X → Y visible, so the effect of X on Y
+	// in the context Z is identifiable.
+	g1, _ := causa.NewPAG([]string{"Z", "X", "Y"}, []causa.PAGEdge{
+		{A: 0, B: 1, MarkA: causa.Circle, MarkB: causa.Arrow}, // Z o→ X
+		{A: 1, B: 2, MarkA: causa.Tail, MarkB: causa.Arrow},   // X → Y
+	})
+	r1, _ := g1.IdentifyConditional([]int{2}, []int{1}, []int{0})
+	fmt.Println("Z o-> X -> Y          :", r1.Identifiable)
+
+	// Z → X → Y with Z → Y, as a PAG: the directed edges are INVISIBLE (no witness),
+	// so the class admits confounding and P(Y | do(X), Z) is not identifiable —
+	// unlike the same graph asserted as a DAG.
+	g2, _ := causa.NewPAG([]string{"X", "Y", "Z"}, []causa.PAGEdge{
+		{A: 2, B: 0, MarkA: causa.Tail, MarkB: causa.Arrow}, // Z → X
+		{A: 0, B: 1, MarkA: causa.Tail, MarkB: causa.Arrow}, // X → Y
+		{A: 2, B: 1, MarkA: causa.Tail, MarkB: causa.Arrow}, // Z → Y
+	})
+	r2, _ := g2.IdentifyConditional([]int{1}, []int{0}, []int{2})
+	fmt.Println("Z -> X -> Y, Z -> Y   :", r2.Identifiable)
+
+	// Output:
+	// Z o-> X -> Y          : true
+	// Z -> X -> Y, Z -> Y   : false
+}

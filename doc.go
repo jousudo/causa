@@ -1,7 +1,7 @@
 // Package causa provides causal inference and causal discovery for time
 // series in pure Go (standard library only, CGO-free).
 //
-// Status: early development — v0.8.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.9.0 released; pre-v1.0, minor versions may
 // still change the API.
 //
 // Implemented:
@@ -49,10 +49,17 @@
 //     symbolic (render-only) estimand; the identifiability DECISION is the
 //     validated guarantee, cross-checked against the reference PAGId
 //     implementation. Released in v0.8.0.
+//   - Conditional causal-effect identification over an equivalence class — the
+//     Jaber–Zhang–Bareinboim CIDP algorithm (IdentifyConditionalPAG, or the
+//     (*PAG).IdentifyConditional method) decides whether the CONDITIONAL effect
+//     P(y | do(x), z) — the effect of x on y within a context z — is identifiable
+//     from a PAG, via the PAG do-calculus Rule 2 (definite-status m-separation on
+//     a manipulated PAG) plus IDP. Decision cross-checked against PAGId::CIDP;
+//     symbolic (render-only) estimand. Released in v0.9.0.
 //
-// Research: identification under selection bias, the conditional effect over a
-// PAG (CIDP), numeric evaluation of the PAG estimand, and estimation of the
-// identified estimand from continuous samples. See the README for the honest
+// Research: identification under selection bias, numeric evaluation of the PAG
+// estimand, and estimation of the identified estimand from continuous samples.
+// See the README for the honest
 // roadmap and the assumptions each method rests on: no capability is claimed
 // before it is implemented, validated against ground-truth datasets, and
 // benchmarked.

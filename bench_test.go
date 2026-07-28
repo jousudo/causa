@@ -237,3 +237,23 @@ func BenchmarkIdentifyPAG_chain6(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkIdentifyConditionalPAG_chain(b *testing.B) {
+	// A → B → C → D with context B: exercises the Rule-2 m-separation loop plus the
+	// IDP subroutine over a PAG.
+	g, err := causa.NewPAG([]string{"A", "B", "C", "D"}, []causa.PAGEdge{
+		{A: 0, B: 1, MarkA: causa.Tail, MarkB: causa.Arrow},
+		{A: 1, B: 2, MarkA: causa.Tail, MarkB: causa.Arrow},
+		{A: 2, B: 3, MarkA: causa.Tail, MarkB: causa.Arrow},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := g.IdentifyConditional([]int{3}, []int{2}, []int{1}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

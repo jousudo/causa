@@ -2,13 +2,14 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.8.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.9.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
 > `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
 > FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, the Shpitser–Pearl ID
 > algorithm for causal-effect identification in `v0.6.0`, the IDC algorithm for
-> conditional-effect identification in `v0.7.0`, and the IDP algorithm for
-> identification over a PAG (an equivalence class) in `v0.8.0`.
+> conditional-effect identification in `v0.7.0`, the IDP algorithm for
+> identification over a PAG (an equivalence class) in `v0.8.0`, and the CIDP
+> algorithm for conditional identification over a PAG in `v0.9.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -47,6 +48,7 @@ anywhere Go runs.
 | Causal-effect identification | Shpitser–Pearl ID → symbolic estimand + discrete evaluator | **Released in `v0.6.0`** — validated against brute-force truth on random latent SCMs; decides identifiability of `P(y \| do(x))` in a diagram with latent confounders, or proves non-identifiability with a hedge (see below) |
 | Conditional-effect identification | Shpitser–Pearl IDC (do-calculus Rule 2 + m-separation + ID) | **Released in `v0.7.0`** — validated against brute-force truth on random latent SCMs; identifies `P(y \| do(x), z)`, the effect of `x` on `y` within a context `z` (see below) |
 | Identification over an equivalence class | Jaber–Zhang–Bareinboim IDP (pc-components + regions, Prop. 6/7 over induced PAGs) | **Released in `v0.8.0`** — decides identifiability of `P(y \| do(x))` from a **PAG** (what FCI returns), not a single asserted diagram; decision cross-checked case-for-case against the reference `PAGId` implementation; symbolic (render-only) estimand; assumes no selection bias (see below) |
+| Conditional identification over an equivalence class | Jaber–Zhang–Bareinboim CIDP (PAG do-calculus Rule 2 + definite-status m-separation + IDP) | **Released in `v0.9.0`** — decides identifiability of `P(y \| do(x), z)` from a **PAG**, the contextual effect; decision cross-checked against `PAGId::CIDP`; symbolic (render-only) estimand; assumes no selection bias (see below) |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
@@ -383,6 +385,17 @@ release). Out of scope for now: the conditional effect over a PAG (CIDP), numeri
 PAG estimand, and — as everywhere in this library — selection bias. Reference: Jaber, Ribeiro, Zhang &
 Bareinboim, "Causal Identification under Markov Equivalence: Calculus, Algorithm, and Completeness"
 (NeurIPS 2022).
+
+**Conditional effects over a PAG.** `IdentifyConditionalPAG(g, y, x, z)` (or `(*PAG).IdentifyConditional`)
+is to `IdentifyPAG` what IDC is to ID: it decides whether the **contextual** effect `P(y | do(x), z)`
+is identifiable from the equivalence class — "what does this remediation do to the SLO **for this
+class of service**?", now honest about latent confounding. It is the Jaber–Zhang–Bareinboim CIDP
+algorithm: the PAG **do-calculus Rule 2** (a definite-status **m-separation** test in the manipulated
+PAG `P_{\overline{W},\underline{X}}` — edges into `W` removed, then *visible* edges out of `X`
+removed) moves each context variable that behaves like an intervention from `z` into `x`, after which
+the residual `P_x(y, z) / \sum_y P_x(y, z)` is handed to IDP. Same scope as IDP: the identifiability
+**decision** is the validated guarantee (cross-checked against `PAGId::CIDP`), the estimand is
+render-only. With `z` empty it is exactly `IdentifyPAG`.
 
 ### Granger causality
 
