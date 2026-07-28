@@ -2,9 +2,10 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.4.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.5.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
-> `v0.3.0`, and linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`.
+> `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`, and
+> FCI latent-confounder discovery (returning a PAG) in `v0.5.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -39,6 +40,7 @@ anywhere Go runs.
 | Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Released in `v0.2.0`** — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
 | Directional discovery | DirectLiNGAM (deterministic, non-Gaussian noise) → causal order + weighted DAG | **Released in `v0.3.0`** — ground-truth-validated and benchmarked; identifies a fully directed model when the noise is non-Gaussian (see below) |
 | Interventions / counterfactuals | Linear SEM + do-operator (forward substitution; Pearl abduction–action–prediction) | **Released in `v0.4.0`** — exact for a fully specified linear SEM; the general do-calculus *identification* problem (latent confounders) remains research (see below) |
+| Latent-confounder discovery | FCI (Possible-D-SEP + Zhang's rules) → PAG | **Released in `v0.5.0`** — ground-truth-validated and benchmarked; drops causal sufficiency, reporting latent common causes as bidirected (↔) edges; assumes no selection bias (see below) |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
@@ -90,6 +92,70 @@ correct CI test (the default assumes linear-Gaussian data). On small samples the
 cap: conditioning sets stop growing once `n − |S| − 3 < 1`, so independencies that need larger
 conditioning sets than the sample supports cannot be tested and some edges a larger sample would
 remove may remain.
+
+### Latent-confounder discovery (FCI)
+
+`FCI(data, names, opts)` runs the Fast Causal Inference algorithm of Spirtes, Glymour & Scheines
+and returns a **Partial Ancestral Graph (PAG)**. It is the constraint-based sibling of `PCStable`
+with one crucial difference: **it drops causal sufficiency.** PC assumes every common cause is
+measured; FCI does not, and where the data imply an unobserved common cause it says so — an edge
+`A ↔ B` — instead of inventing a spurious direct link. This is the difference between "the database
+causes the latency" and "something you are not measuring drives both".
+
+**A PAG is read endpoint by endpoint, not as whole arrows.** Each edge end carries one of three
+marks: an **arrowhead** (`>`, a *definite non-ancestor* — compelled across the whole equivalence
+class), a **tail** (`-`, a *definite ancestor*), or a **circle** (`o`, *undetermined*). So the
+edge types mean:
+
+- `A → B` — a definite direction: `B` is not a cause of `A` in any graph of the class.
+- `A ↔ B` — **a latent common cause**: neither causes the other; something unobserved drives both.
+  This is the structure causal sufficiency cannot express, and the reason FCI exists.
+- `A o→ B` — the arrowhead at `B` is compelled, but `A`'s end is undetermined.
+- `A o—o B` — wholly undetermined direction (as an undirected CPDAG edge is).
+
+Reading a circle as "no relationship" is the classic error — it means *direction not identified*.
+
+**Algorithm.** FCI starts from the PC-stable skeleton (shared code, same order-independence), then
+does what PC cannot: the **Possible-D-SEP** refinement. The PC skeleton can leave an edge that is
+removable only by conditioning on variables *not adjacent* to the pair; FCI hunts for exactly those
+separating sets. A vertex $v$ is in $\mathrm{Possible\text{-}D\text{-}SEP}(a)$ when some path
+$a \dots v$ has, for **every** consecutive triple $\langle x, y, z\rangle$ on it, either $y$ a
+collider on the path ($x \mathbin{*}\!\!\to y \leftarrow\!\!\mathbin{*} z$) or $\{x, y, z\}$ a
+triangle:
+
+```math
+v \in \mathrm{Possible\text{-}D\text{-}SEP}(a) \iff
+\exists\, \text{path } a \dots v \ \text{s.t. } \forall\, \langle x,y,z\rangle:\ 
+y \text{ is a collider on the path} \ \lor\ x, z \text{ adjacent.}
+```
+
+For every still-adjacent pair FCI tests conditional independence against subsets of this set,
+deleting the edge (and recording the separating set) when a test passes. The Possible-D-SEP sets
+are snapshotted **before** any deletion, so — exactly like the PC-stable skeleton — the result does
+not depend on the order pairs are visited. Unshielded colliders are then oriented (from the
+refined separating sets), and the graph is completed by **Zhang's orientation rules R1–R4 and
+R8–R10**, applied to closure: R1–R3 propagate arrowheads that would otherwise create an unlicensed
+collider or cycle, R4 is the discriminating-path rule, and R8–R10 add the compelled *tails* that
+distinguish a definite `→` from an `o→`.
+
+**Scope — no selection bias.** This implementation assumes the sampling process induces no
+selection (no conditioning by how the data were collected). It therefore never produces tail–tail
+(`—`) edges, and **Zhang's selection-bias rules R5–R7 are deliberately omitted** — on a
+no-selection PAG they can never fire, and running them could only introduce spurious `—` edges.
+R1–R4 and R8–R10 are the sound **and complete** rule set for this class, so the PAG is maximally
+informative under the stated assumption. Admitting selection bias is a strictly larger problem and
+is out of scope here — stated plainly rather than left for a user to discover.
+
+**Assumptions** (stated because, as everywhere here, violating them silently returns a plausible
+but wrong graph): *faithfulness*, a correct CI test (the default `FisherZTest` assumes
+linear-Gaussian data), and the *no-selection-bias* scope above. Causal sufficiency is **not**
+required — that is the entire point. The honest small-sample cap carries over from PC: conditioning
+sets stop growing once `n − |S| − 3 < 1`.
+
+Reference: Spirtes, Glymour & Scheines, *Causation, Prediction, and Search* (2nd ed., 2000), ch. 6
+(FCI, Possible-D-SEP); Zhang, "On the completeness of orientation rules for causal discovery in the
+presence of latent confounders and selection bias", *Artificial Intelligence* 172 (2008)
+(rules R1–R10); Colombo & Maathuis, *JMLR* 15 (2014) (order-independent skeleton).
 
 ### Directional discovery (DirectLiNGAM)
 

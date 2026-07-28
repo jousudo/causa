@@ -1,7 +1,7 @@
 // Package causa provides causal inference and causal discovery for time
 // series in pure Go (standard library only, CGO-free).
 //
-// Status: early development — v0.4.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.5.0 released; pre-v1.0, minor versions may
 // still change the API.
 //
 // Implemented:
@@ -23,6 +23,12 @@
 //     v0.4.0. Exact for a fully specified linear SEM (e.g. one DirectLiNGAM
 //     recovered); the general do-calculus IDENTIFICATION problem with latent
 //     confounders remains research.
+//   - Latent-confounder causal discovery — the FCI (Fast Causal Inference)
+//     algorithm (FCI) returning a Partial Ancestral Graph (PAG). Unlike
+//     PCStable it does NOT assume causal sufficiency: unobserved common causes
+//     are admitted and reported as bidirected (↔) edges, recovered via
+//     Possible-D-SEP refinement and Zhang's complete orientation rules
+//     (assuming no selection bias). Released in v0.5.0.
 //
 // Research: general do-calculus identification (recovering interventional from
 // observational distributions under latent confounding). See the README for the

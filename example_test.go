@@ -216,3 +216,42 @@ func ExampleSEM() {
 	// total effect X->Z: 6
 	// counterfactual do(X=5): Y=11 Z=32
 }
+
+// ExampleFCI recovers a latent common cause. A hidden variable L drives both B
+// and C, while A drives B and D drives C. FCI sees only {A, B, C, D} — never L —
+// yet returns B ↔ C, the bidirected edge that says "neither B nor C causes the
+// other; a common cause is hidden". A causal-sufficiency method (PCStable) cannot
+// express this. The two outer edges come back A o→ B and C ←o D: the arrowheads
+// into B and C are compelled, their far ends left undetermined. The draw is
+// seeded for a deterministic result.
+func ExampleFCI() {
+	rng := rand.New(rand.NewSource(20260727))
+	const n = 12000
+	// True DAG over {A,B,C,D,L}: A→B, L→B, L→C, D→C. L is the latent confounder.
+	a := make([]float64, n)
+	b := make([]float64, n)
+	c := make([]float64, n)
+	d := make([]float64, n)
+	for t := 0; t < n; t++ {
+		av := rng.NormFloat64()
+		dv := rng.NormFloat64()
+		lv := rng.NormFloat64() // latent — never handed to FCI
+		a[t] = av
+		d[t] = dv
+		b[t] = 0.9*av + 0.9*lv + rng.NormFloat64()
+		c[t] = 0.9*lv + 0.9*dv + rng.NormFloat64()
+	}
+
+	// Only the observed variables are passed; L is withheld.
+	g, err := causa.FCI([][]float64{a, b, c, d}, []string{"A", "B", "C", "D"}, nil)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(g)
+
+	// Output:
+	// PAG with 4 nodes [A B C D]:
+	//   A o-> B
+	//   B <-> C
+	//   C <-o D
+}

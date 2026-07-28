@@ -132,6 +132,17 @@ func benchLiNGAMData(seed int64, n, p int) [][]float64 {
 	return data
 }
 
+func BenchmarkFCI_p8_n1000(b *testing.B) {
+	data := benchPCData(7, 1000, 8)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := causa.FCI(data, nil, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDirectLiNGAM_p6_n2000(b *testing.B) {
 	data := benchLiNGAMData(7, 2000, 6)
 	b.ReportAllocs()
