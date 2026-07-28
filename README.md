@@ -2,10 +2,11 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.5.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.6.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
-> `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`, and
-> FCI latent-confounder discovery (returning a PAG) in `v0.5.0`.
+> `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
+> FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, and the Shpitser–Pearl ID
+> algorithm for causal-effect identification in `v0.6.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -41,6 +42,7 @@ anywhere Go runs.
 | Directional discovery | DirectLiNGAM (deterministic, non-Gaussian noise) → causal order + weighted DAG | **Released in `v0.3.0`** — ground-truth-validated and benchmarked; identifies a fully directed model when the noise is non-Gaussian (see below) |
 | Interventions / counterfactuals | Linear SEM + do-operator (forward substitution; Pearl abduction–action–prediction) | **Released in `v0.4.0`** — exact for a fully specified linear SEM; the general do-calculus *identification* problem (latent confounders) remains research (see below) |
 | Latent-confounder discovery | FCI (Possible-D-SEP + Zhang's rules) → PAG | **Released in `v0.5.0`** — ground-truth-validated and benchmarked; drops causal sufficiency, reporting latent common causes as bidirected (↔) edges; assumes no selection bias (see below) |
+| Causal-effect identification | Shpitser–Pearl ID → symbolic estimand + discrete evaluator | **Released in `v0.6.0`** — validated against brute-force truth on random latent SCMs; decides identifiability of `P(y \| do(x))` in a diagram with latent confounders, or proves non-identifiability with a hedge (see below) |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
@@ -267,11 +269,61 @@ satisfies by construction.
 **Scope** (stated bluntly, as everywhere here). This is the *identified* linear-SEM case: it assumes
 you already hold the full structural model — every direct effect and the acyclic structure. It does
 **not** solve the general do-calculus *identification* problem — recovering an interventional
-distribution from an *observational* one plus a partially known graph with **latent confounders**
-(Pearl's do-calculus rules and the ID algorithm) — which remains research. What ships is exact for a
+distribution from an *observational* one plus a partially known graph with **latent confounders** —
+which is exactly what `Identify` (below) does. What ships here is exact for a
 fully specified linear SEM, where interventions and counterfactuals reduce to forward substitution
 through the structural equations. Linearity, acyclicity and causal sufficiency carry over from the
 model you supply; a mis-specified $B$ returns a plausible but wrong answer, silently.
+
+### Causal-effect identification (ID algorithm)
+
+`Identify(g, y, x)` answers the question the linear-SEM path cannot: given only a causal *diagram*
+— not a fully specified model — **can the interventional distribution `P(y | do(x))` be computed
+from observational data at all**, and if so, what is the formula? It is the Shpitser–Pearl ID
+algorithm, sound *and complete* for a single causal diagram: if it returns an estimand the effect is
+identifiable, and if it returns a hedge the effect is provably **not** identifiable — no algorithm
+could do better.
+
+The input is a `Diagram`, an acyclic directed mixed graph (ADMG) with two edge kinds: directed
+`X → Y` (direct causation) and **bidirected `X ↔ Y`** (an unobserved common cause — a latent
+confounder). Causal sufficiency is *not* assumed; that is the whole point. This is the graph a
+`v0.5.0` FCI run is evidence about — though `Identify` takes a single asserted diagram, not a PAG
+(identifying over an equivalence class is the separate IDP algorithm, out of scope).
+
+**Identifiability, and why it can fail.** An effect is identifiable when every causal model
+consistent with the diagram that agrees on the observational `P(V)` also agrees on `P(y | do(x))`.
+When two models can match on all observables yet disagree on the interventional answer, no estimand
+exists — the **bow arc** `X → Y` with `X ↔ Y` is the canonical failure. The algorithm detects these
+via *hedges* (a C-forest structure); `IDResult.Identifiable` reports which case holds and
+`IDResult.Hedge` names the obstructing vertices.
+
+**The estimand and the discrete evaluator.** When identifiable, the result is a symbolic `Expr` over
+the observational joint, built from marginalization, products and conditionals — the Tian–Pearl
+C-component factorization. For the classic back-door graph it reads
+
+```math
+P(y \mid do(x)) \;=\; \sum_{z} P(y \mid x, z)\,P(z),
+```
+
+and for the front-door graph `X → M → Y` with `X ↔ Y` (identifiable *despite* the latent confounder)
+
+```math
+P(y \mid do(x)) \;=\; \sum_{m} P(m \mid x)\sum_{x'} P(y \mid m, x')\,P(x').
+```
+
+The estimand is exact but *not* algebraically simplified, so it may not read character-for-character
+like the textbook form — its **value** is what is guaranteed. `Expr.Evaluate` turns it into numbers:
+give it a discrete observational joint (`Distribution`) and it returns the interventional table
+`P(y | do(x))`. This is how the implementation is validated — against brute-force truncated
+factorization on *random* discrete latent SCMs, the parameterization-independent proof of
+correctness — and it is a useful capability in its own right.
+
+**Scope.** Sound and complete identification for one causal diagram **without selection bias**;
+non-identifiability is returned as a result, not an error. Out of scope (and stated so plainly):
+selection bias, identification over a PAG (IDP), and estimating the identified estimand from
+*continuous* samples — the evaluator is for discrete joints. Reference: Shpitser & Pearl,
+"Identification of Joint Interventional Distributions in Recursive Semi-Markovian Causal Models"
+(AAAI 2006); Tian & Pearl, "A General Identification Condition for Causal Effects" (AAAI 2002).
 
 ### Granger causality
 

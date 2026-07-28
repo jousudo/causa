@@ -143,6 +143,23 @@ func BenchmarkFCI_p8_n1000(b *testing.B) {
 	}
 }
 
+func BenchmarkIdentify_frontdoorChain(b *testing.B) {
+	// X→M1→M2→Y with a latent X↔Y: an identifiable effect that exercises the
+	// c-component recursion (Possible-D-SEP-free, symbolic).
+	g, err := causa.NewDiagram([]string{"X", "M1", "M2", "Y"},
+		[][2]int{{0, 1}, {1, 2}, {2, 3}}, [][2]int{{0, 3}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := causa.Identify(g, []int{3}, []int{0}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDirectLiNGAM_p6_n2000(b *testing.B) {
 	data := benchLiNGAMData(7, 2000, 6)
 	b.ReportAllocs()

@@ -255,3 +255,39 @@ func ExampleFCI() {
 	//   B <-> C
 	//   C <-o D
 }
+
+// ExampleIdentify decides whether an interventional effect P(y | do(x)) can be
+// computed from observational data given a causal diagram with latent
+// confounders, and returns the estimand when it can. Two contrasting cases: a
+// back-door graph (identifiable — the classic adjustment formula), and the bow
+// arc, where a latent common cause makes the same effect NOT identifiable. The
+// estimand is then evaluated on a discrete observational joint to get the actual
+// interventional number.
+func ExampleIdentify() {
+	// Back-door: X → Y confounded by an OBSERVED Z (Z → X, Z → Y). X=0, Y=1, Z=2.
+	bd, _ := causa.NewDiagram([]string{"X", "Y", "Z"},
+		[][2]int{{0, 1}, {2, 0}, {2, 1}}, nil)
+	r1, _ := causa.Identify(bd, []int{1}, []int{0})
+	fmt.Println("back-door identifiable:", r1.Identifiable)
+	fmt.Println("  estimand:", r1)
+
+	// Evaluate it on a discrete joint P(X,Y,Z) (all binary) to get a number.
+	joint, _ := causa.NewDistribution([]int{2, 2, 2},
+		[]float64{0.05, 0.10, 0.08, 0.12, 0.15, 0.07, 0.18, 0.25})
+	tab, _ := r1.Estimand.Evaluate(joint)
+	p, _ := tab.ProbAt(map[int]int{0: 1, 1: 1}) // P(Y=1 | do(X=1))
+	fmt.Printf("  P(Y=1 | do(X=1)) = %.4f\n", p)
+
+	// Bow arc: X → Y with a LATENT common cause X ↔ Y. Same query, not identifiable.
+	bow, _ := causa.NewDiagram([]string{"X", "Y"}, [][2]int{{0, 1}}, [][2]int{{0, 1}})
+	r2, _ := causa.Identify(bow, []int{1}, []int{0})
+	fmt.Println("bow-arc identifiable:", r2.Identifiable)
+	fmt.Println(" ", r2)
+
+	// Output:
+	// back-door identifiable: true
+	//   estimand: Σ_{Z}[P(Y|X,Z)·Σ_{X,Y}[P(X,Y,Z)]]
+	//   P(Y=1 | do(X=1)) = 0.6728
+	// bow-arc identifiable: false
+	//   not identifiable (hedge over {X,Y} ⊇ {Y})
+}

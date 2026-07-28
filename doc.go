@@ -1,7 +1,7 @@
 // Package causa provides causal inference and causal discovery for time
 // series in pure Go (standard library only, CGO-free).
 //
-// Status: early development — v0.5.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.6.0 released; pre-v1.0, minor versions may
 // still change the API.
 //
 // Implemented:
@@ -29,10 +29,17 @@
 //     are admitted and reported as bidirected (↔) edges, recovered via
 //     Possible-D-SEP refinement and Zhang's complete orientation rules
 //     (assuming no selection bias). Released in v0.5.0.
+//   - Causal-effect identification — the Shpitser–Pearl ID algorithm
+//     (Identify) decides whether an interventional distribution P(y | do(x)) is
+//     identifiable from the observational distribution in a causal diagram with
+//     latent confounders, returning a symbolic estimand over P(V) (or a hedge
+//     proving non-identifiability). A discrete evaluator (Expr.Evaluate) turns
+//     the estimand into numbers from an observational joint. Released in v0.6.0.
 //
-// Research: general do-calculus identification (recovering interventional from
-// observational distributions under latent confounding). See the README for the
-// honest roadmap and the assumptions each method rests on: no capability is
-// claimed before it is implemented, validated against ground-truth datasets, and
+// Research: identification under selection bias, over an equivalence class (a
+// PAG, the IDP algorithm) rather than a single diagram, and estimation of the
+// identified estimand from continuous samples. See the README for the honest
+// roadmap and the assumptions each method rests on: no capability is claimed
+// before it is implemented, validated against ground-truth datasets, and
 // benchmarked.
 package causa
