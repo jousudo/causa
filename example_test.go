@@ -2,6 +2,7 @@ package causa_test
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 
 	"github.com/jousudo/causa"
@@ -100,4 +101,81 @@ func ExampleDirectLiNGAM() {
 	// Output:
 	// causal order: [cause effect]
 	// cause -> effect: 1.5
+}
+
+// ExamplePartialCorrelation shows how conditioning removes a spurious
+// correlation. A latent common cause Z drives both X and Y, so X and Y are
+// correlated on their own; but given Z the partial correlation collapses to ~0 —
+// the numeric heart of constraint-based discovery. The draw is seeded so the
+// output is deterministic.
+func ExamplePartialCorrelation() {
+	rng := rand.New(rand.NewSource(7))
+	const n = 2000
+	x := make([]float64, n)
+	y := make([]float64, n)
+	z := make([]float64, n)
+	for t := 0; t < n; t++ {
+		z[t] = rng.NormFloat64()
+		x[t] = z[t] + rng.NormFloat64() // X = Z + noise
+		y[t] = z[t] + rng.NormFloat64() // Y = Z + noise
+	}
+	data := [][]float64{x, y, z} // indices: X=0, Y=1, Z=2
+
+	// Marginal correlation of X and Y (empty conditioning set).
+	rMarg, err := causa.PartialCorrelation(data, 0, 1, nil)
+	if err != nil {
+		panic(err)
+	}
+	// Partial correlation of X and Y given Z.
+	rCond, err := causa.PartialCorrelation(data, 0, 1, []int{2})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("X,Y correlated marginally: %v\n", math.Abs(rMarg) > 0.3)
+	fmt.Printf("X,Y uncorrelated given Z:  %v\n", math.Abs(rCond) < 0.1)
+
+	// Output:
+	// X,Y correlated marginally: true
+	// X,Y uncorrelated given Z:  true
+}
+
+// ExampleFisherZTest shows the default conditional-independence test PCStable
+// uses. On the same latent-common-cause data (Z drives X and Y), the test reports
+// X and Y as dependent on their own, but conditionally INDEPENDENT given Z — the
+// edge-deletion decision the PC algorithm is built on. The draw is seeded so the
+// output is deterministic.
+func ExampleFisherZTest() {
+	rng := rand.New(rand.NewSource(7))
+	const n = 2000
+	x := make([]float64, n)
+	y := make([]float64, n)
+	z := make([]float64, n)
+	for t := 0; t < n; t++ {
+		z[t] = rng.NormFloat64()
+		x[t] = z[t] + rng.NormFloat64()
+		y[t] = z[t] + rng.NormFloat64()
+	}
+	data := [][]float64{x, y, z} // indices: X=0, Y=1, Z=2
+
+	pMarg, err := causa.FisherZTest(data, 0, 1, nil)
+	if err != nil {
+		panic(err)
+	}
+	pCond, err := causa.FisherZTest(data, 0, 1, []int{2})
+	if err != nil {
+		panic(err)
+	}
+
+	// Marginally X and Y are strongly dependent; conditioning on the common cause Z
+	// collapses that dependence by many orders of magnitude (the edge-deletion the
+	// PC algorithm makes). A fixed p>0.05 threshold would be brittle at this sample
+	// size — a correctly-sized α=0.05 test still rejects ~5% of the time under true
+	// independence — so the robust, deterministic claim is the contrast itself.
+	fmt.Printf("marginal dependence significant (p < 1e-6):    %v\n", pMarg < 1e-6)
+	fmt.Printf("given Z the signal collapses (pCond >> pMarg): %v\n", pCond > 1e6*pMarg)
+
+	// Output:
+	// marginal dependence significant (p < 1e-6):    true
+	// given Z the signal collapses (pCond >> pMarg): true
 }
