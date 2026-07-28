@@ -291,3 +291,29 @@ func ExampleIdentify() {
 	// bow-arc identifiable: false
 	//   not identifiable (hedge over {X,Y} ⊇ {Y})
 }
+
+// ExampleIdentifyConditional identifies a CONDITIONAL effect P(y | do(x), z) — the
+// effect of X on Y within the subpopulation where the context Z takes a value.
+// Here Z → X → Y with Z → Y: conditioning on the pre-treatment context Z, the
+// effect is simply P(y | x, z). The algorithm recognises (via do-calculus Rule 2)
+// that Z behaves like an intervention and returns that estimand.
+func ExampleIdentifyConditional() {
+	// Z → X → Y, Z → Y. X=0, Y=1, Z=2.
+	g, _ := causa.NewDiagram([]string{"X", "Y", "Z"},
+		[][2]int{{2, 0}, {0, 1}, {2, 1}}, nil)
+	r, _ := causa.IdentifyConditional(g, []int{1}, []int{0}, []int{2})
+	fmt.Println("identifiable:", r.Identifiable)
+	fmt.Println("  estimand:", r)
+
+	// Evaluate P(Y=1 | do(X=1), Z=0) on a discrete observational joint.
+	joint, _ := causa.NewDistribution([]int{2, 2, 2},
+		[]float64{0.05, 0.10, 0.08, 0.12, 0.15, 0.07, 0.18, 0.25})
+	tab, _ := r.Estimand.Evaluate(joint)
+	p, _ := tab.ProbAt(map[int]int{0: 1, 1: 1, 2: 0})
+	fmt.Printf("  P(Y=1 | do(X=1), Z=0) = %.4f\n", p)
+
+	// Output:
+	// identifiable: true
+	//   estimand: P(Y|X,Z)
+	//   P(Y=1 | do(X=1), Z=0) = 0.5455
+}

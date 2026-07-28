@@ -205,6 +205,7 @@ const (
 	exprConditional                 // P(head | given), a conditional of `base` within `universe`
 	exprProduct                     // a product of factors
 	exprMarginal                    // a summation over `over` of `child`
+	exprRatio                       // num / den (den's variables a subset of num's)
 )
 
 // Expr is a symbolic estimand: the interventional distribution the ID algorithm
@@ -231,6 +232,9 @@ type Expr struct {
 	// exprMarginal.
 	over  []int
 	child *Expr
+
+	// exprRatio.
+	num, den *Expr
 }
 
 func jointExpr(v []int) *Expr {
@@ -262,6 +266,12 @@ func marginalExpr(over []int, child *Expr) *Expr {
 		return child
 	}
 	return &Expr{kind: exprMarginal, over: append([]int(nil), over...), child: child}
+}
+
+// ratioExpr builds num / den (den's variables a subset of num's) — a conditional
+// P(A | B) = P(A, B) / P(B) between two identified distributions.
+func ratioExpr(num, den *Expr) *Expr {
+	return &Expr{kind: exprRatio, num: num, den: den}
 }
 
 // Evaluate computes the estimand numerically against an observational joint
@@ -336,6 +346,8 @@ func evalExpr(e *Expr, joint *Distribution, gcard []int) *Distribution {
 		num := factorMarginalize(b, numOver, gcard)
 		den := factorMarginalize(b, denOver, gcard)
 		return factorDivide(num, den, gcard)
+	case exprRatio:
+		return factorDivide(evalExpr(e.num, joint, gcard), evalExpr(e.den, joint, gcard), gcard)
 	}
 	return nil
 }
@@ -383,6 +395,8 @@ func renderExpr(e *Expr, names []string) string {
 		return strings.Join(parts, "·")
 	case exprMarginal:
 		return "Σ_{" + list(e.over) + "}[" + renderExpr(e.child, names) + "]"
+	case exprRatio:
+		return "[" + renderExpr(e.num, names) + "] / [" + renderExpr(e.den, names) + "]"
 	}
 	return "?"
 }

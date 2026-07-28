@@ -5,8 +5,9 @@ Causal inference for Go. Pure standard library. Zero dependencies.
 > **Status: early development — `v0.6.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
 > `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
-> FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, and the Shpitser–Pearl ID
-> algorithm for causal-effect identification in `v0.6.0`.
+> FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, the Shpitser–Pearl ID
+> algorithm for causal-effect identification in `v0.6.0`, and the IDC algorithm for
+> conditional-effect identification in `v0.7.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -43,6 +44,7 @@ anywhere Go runs.
 | Interventions / counterfactuals | Linear SEM + do-operator (forward substitution; Pearl abduction–action–prediction) | **Released in `v0.4.0`** — exact for a fully specified linear SEM; the general do-calculus *identification* problem (latent confounders) remains research (see below) |
 | Latent-confounder discovery | FCI (Possible-D-SEP + Zhang's rules) → PAG | **Released in `v0.5.0`** — ground-truth-validated and benchmarked; drops causal sufficiency, reporting latent common causes as bidirected (↔) edges; assumes no selection bias (see below) |
 | Causal-effect identification | Shpitser–Pearl ID → symbolic estimand + discrete evaluator | **Released in `v0.6.0`** — validated against brute-force truth on random latent SCMs; decides identifiability of `P(y \| do(x))` in a diagram with latent confounders, or proves non-identifiability with a hedge (see below) |
+| Conditional-effect identification | Shpitser–Pearl IDC (do-calculus Rule 2 + m-separation + ID) | **Released in `v0.7.0`** — validated against brute-force truth on random latent SCMs; identifies `P(y \| do(x), z)`, the effect of `x` on `y` within a context `z` (see below) |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
@@ -324,6 +326,23 @@ selection bias, identification over a PAG (IDP), and estimating the identified e
 *continuous* samples — the evaluator is for discrete joints. Reference: Shpitser & Pearl,
 "Identification of Joint Interventional Distributions in Recursive Semi-Markovian Causal Models"
 (AAAI 2006); Tian & Pearl, "A General Identification Condition for Causal Effects" (AAAI 2002).
+
+**Conditional effects.** `IdentifyConditional(g, y, x, z)` identifies `P(y | do(x), z)` — the effect
+of `x` on `y` *within the subpopulation where the context `z` takes a value* — the query that
+actually drives contextual decisions ("what does this remediation do to the SLO **for this kind of
+service**?"). It is the Shpitser–Pearl IDC algorithm: do-calculus **Rule 2** moves each conditioning
+variable that behaves like an intervention out of `z` and into `x` — decided by an **m-separation**
+test (d-separation generalized to mixed graphs, `X ⫫ Y | Z` accounting for bidirected edges) in the
+graph with the edges into `x` and out of the candidate removed — until none remains movable; the
+residual is then
+
+```math
+P(y \mid do(x), z) \;=\; \frac{P_x(y, z)}{P_x(z)} \;=\; \frac{P_x(y, z)}{\sum_{y} P_x(y, z)},
+```
+
+with the joint `P_x(y, z)` handed to the ID algorithm above. With `z` empty it is exactly `Identify`;
+if the joint is not identifiable, neither is the conditional effect. Reference: Shpitser & Pearl,
+"Identification of Conditional Interventional Distributions" (UAI 2006).
 
 ### Granger causality
 

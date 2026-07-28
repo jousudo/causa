@@ -160,6 +160,23 @@ func BenchmarkIdentify_frontdoorChain(b *testing.B) {
 	}
 }
 
+func BenchmarkIdentifyConditional_context(b *testing.B) {
+	// Z→X→Y, Z→Y: a conditional effect P(y|do(x),z) exercising the do-calculus
+	// Rule-2 loop (m-separation) plus the ID subroutine.
+	g, err := causa.NewDiagram([]string{"X", "Y", "Z"},
+		[][2]int{{2, 0}, {0, 1}, {2, 1}}, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := causa.IdentifyConditional(g, []int{1}, []int{0}, []int{2}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDirectLiNGAM_p6_n2000(b *testing.B) {
 	data := benchLiNGAMData(7, 2000, 6)
 	b.ReportAllocs()
