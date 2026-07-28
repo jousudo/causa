@@ -388,6 +388,9 @@ func renderExpr(e *Expr, names []string) string {
 		}
 		return "[" + renderExpr(e.base, names) + "](" + inner + ")"
 	case exprProduct:
+		if len(e.factors) == 0 {
+			return "1" // empty product (the estimand constant 1)
+		}
 		parts := make([]string, len(e.factors))
 		for k, f := range e.factors {
 			parts[k] = renderExpr(f, names)

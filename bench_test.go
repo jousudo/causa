@@ -215,3 +215,25 @@ func BenchmarkIntervene_p6(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkIdentifyPAG_chain6(b *testing.B) {
+	// A o→ B → C → D → E with a latent A ↔ E: an identifiable PAG effect that
+	// exercises the Prop.6 recursion over the induced graphs.
+	g, err := causa.NewPAG([]string{"A", "B", "C", "D", "E"}, []causa.PAGEdge{
+		{A: 0, B: 1, MarkA: causa.Circle, MarkB: causa.Arrow},
+		{A: 1, B: 2, MarkA: causa.Tail, MarkB: causa.Arrow},
+		{A: 2, B: 3, MarkA: causa.Tail, MarkB: causa.Arrow},
+		{A: 3, B: 4, MarkA: causa.Tail, MarkB: causa.Arrow},
+		{A: 0, B: 4, MarkA: causa.Arrow, MarkB: causa.Arrow},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := g.Identify([]int{4}, []int{2}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

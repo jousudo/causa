@@ -317,3 +317,31 @@ func ExampleIdentifyConditional() {
 	//   estimand: P(Y|X,Z)
 	//   P(Y=1 | do(X=1), Z=0) = 0.5455
 }
+
+// ExampleIdentifyPAG decides whether a causal effect is identifiable from a PAG — a
+// whole Markov equivalence class of graphs, as returned by FCI — rather than from a
+// single asserted diagram. The extra difficulty: an effect counts as identifiable
+// only when the SAME estimand is valid for every graph the data leaves possible, so
+// a single undetermined endpoint (a circle) can flip the answer.
+func ExampleIdentifyPAG() {
+	// Z ↔ X → Y: X is confounded with Z by a latent cause, but the edge X → Y is
+	// VISIBLE, so P(Y | do(X)) is identifiable across the entire class.
+	vis, _ := causa.NewPAG([]string{"Z", "X", "Y"}, []causa.PAGEdge{
+		{A: 0, B: 1, MarkA: causa.Arrow, MarkB: causa.Arrow}, // Z ↔ X
+		{A: 1, B: 2, MarkA: causa.Tail, MarkB: causa.Arrow},  // X → Y
+	})
+	r1, _ := vis.Identify([]int{2}, []int{1})
+	fmt.Println("Z<->X->Y  identifiable:", r1.Identifiable)
+
+	// X o→ Y: the circle at X leaves open both X → Y (where do(X) matters) and
+	// X ↔ Y (where it does not); the two disagree, so the effect is NOT identifiable.
+	amb, _ := causa.NewPAG([]string{"X", "Y"}, []causa.PAGEdge{
+		{A: 0, B: 1, MarkA: causa.Circle, MarkB: causa.Arrow}, // X o→ Y
+	})
+	r2, _ := amb.Identify([]int{1}, []int{0})
+	fmt.Println("X o-> Y    identifiable:", r2.Identifiable)
+
+	// Output:
+	// Z<->X->Y  identifiable: true
+	// X o-> Y    identifiable: false
+}

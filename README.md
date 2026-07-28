@@ -2,12 +2,13 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.6.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.8.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
 > `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
 > FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, the Shpitser–Pearl ID
-> algorithm for causal-effect identification in `v0.6.0`, and the IDC algorithm for
-> conditional-effect identification in `v0.7.0`.
+> algorithm for causal-effect identification in `v0.6.0`, the IDC algorithm for
+> conditional-effect identification in `v0.7.0`, and the IDP algorithm for
+> identification over a PAG (an equivalence class) in `v0.8.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -45,6 +46,7 @@ anywhere Go runs.
 | Latent-confounder discovery | FCI (Possible-D-SEP + Zhang's rules) → PAG | **Released in `v0.5.0`** — ground-truth-validated and benchmarked; drops causal sufficiency, reporting latent common causes as bidirected (↔) edges; assumes no selection bias (see below) |
 | Causal-effect identification | Shpitser–Pearl ID → symbolic estimand + discrete evaluator | **Released in `v0.6.0`** — validated against brute-force truth on random latent SCMs; decides identifiability of `P(y \| do(x))` in a diagram with latent confounders, or proves non-identifiability with a hedge (see below) |
 | Conditional-effect identification | Shpitser–Pearl IDC (do-calculus Rule 2 + m-separation + ID) | **Released in `v0.7.0`** — validated against brute-force truth on random latent SCMs; identifies `P(y \| do(x), z)`, the effect of `x` on `y` within a context `z` (see below) |
+| Identification over an equivalence class | Jaber–Zhang–Bareinboim IDP (pc-components + regions, Prop. 6/7 over induced PAGs) | **Released in `v0.8.0`** — decides identifiability of `P(y \| do(x))` from a **PAG** (what FCI returns), not a single asserted diagram; decision cross-checked case-for-case against the reference `PAGId` implementation; symbolic (render-only) estimand; assumes no selection bias (see below) |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
@@ -290,7 +292,7 @@ The input is a `Diagram`, an acyclic directed mixed graph (ADMG) with two edge k
 `X → Y` (direct causation) and **bidirected `X ↔ Y`** (an unobserved common cause — a latent
 confounder). Causal sufficiency is *not* assumed; that is the whole point. This is the graph a
 `v0.5.0` FCI run is evidence about — though `Identify` takes a single asserted diagram, not a PAG
-(identifying over an equivalence class is the separate IDP algorithm, out of scope).
+(identifying over an equivalence class is the separate **IDP** algorithm, `v0.8.0`, below).
 
 **Identifiability, and why it can fail.** An effect is identifiable when every causal model
 consistent with the diagram that agrees on the observational `P(V)` also agrees on `P(y | do(x))`.
@@ -343,6 +345,44 @@ P(y \mid do(x), z) \;=\; \frac{P_x(y, z)}{P_x(z)} \;=\; \frac{P_x(y, z)}{\sum_{y
 with the joint `P_x(y, z)` handed to the ID algorithm above. With `z` empty it is exactly `Identify`;
 if the joint is not identifiable, neither is the conditional effect. Reference: Shpitser & Pearl,
 "Identification of Conditional Interventional Distributions" (UAI 2006).
+
+### Identification over a PAG (IDP)
+
+`IdentifyPAG(g, y, x)` (or the `(*PAG).Identify` method) closes the loop with discovery: it decides
+whether `P(y | do(x))` is identifiable directly from a **PAG** — the Markov equivalence class that
+`FCI` returns — rather than from a single diagram you had to assert. This is the guarantee an
+autonomous system actually needs: when the graph itself was *learned from data*, the honest question
+is not "is the effect identifiable in one graph I picked?" but "is it identifiable in **every** graph
+the data leaves possible?" It is the Jaber–Zhang–Bareinboim IDP algorithm, sound and complete for
+this problem under the no-selection-bias scope.
+
+The difficulty over a single diagram is the circle mark. An edge `X o→ Y` leaves open both `X → Y`
+(where `do(x)` matters) and `X ↔ Y` (where it does not); the two disagree on `P(y | do(x))`, so the
+effect is **not** identifiable — a single undetermined endpoint flips the answer. IDP works by the
+same C-component logic as ID, lifted to PAGs: it reduces the query over the *possible ancestors* of
+`Y`, splitting the working set by **buckets** (o–o components), **pc-components** and **regions**, and
+peeling off marginalizable pieces via Propositions 6 and 7 — with edge **visibility** (whether a
+directed edge can be hiding confounding) judged on the full PAG throughout.
+
+```go
+// Z ↔ X → Y: X is confounded with Z, but the edge X → Y is VISIBLE, so the
+// effect is identifiable across the whole equivalence class.
+g, _ := causa.NewPAG([]string{"Z", "X", "Y"}, []causa.PAGEdge{
+    {A: 0, B: 1, MarkA: causa.Arrow, MarkB: causa.Arrow}, // Z ↔ X
+    {A: 1, B: 2, MarkA: causa.Tail, MarkB: causa.Arrow},  // X → Y
+})
+r, _ := g.Identify([]int{2}, []int{1})
+fmt.Println(r.Identifiable) // true
+```
+
+**Scope and validation.** IDP returns the identifiability **decision** — the sound, tested guarantee,
+cross-checked case-for-case against the authors' reference `PAGId` implementation on byte-identical
+adjacency matrices — together with a *symbolic, render-only* estimand (the exact Prop. 6/7 formula; it
+`String()`s faithfully but, unlike an `Identify` estimand, is **not** wired to `Expr.Evaluate` in this
+release). Out of scope for now: the conditional effect over a PAG (CIDP), numeric evaluation of the
+PAG estimand, and — as everywhere in this library — selection bias. Reference: Jaber, Ribeiro, Zhang &
+Bareinboim, "Causal Identification under Markov Equivalence: Calculus, Algorithm, and Completeness"
+(NeurIPS 2022).
 
 ### Granger causality
 

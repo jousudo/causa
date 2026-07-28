@@ -1,7 +1,7 @@
 // Package causa provides causal inference and causal discovery for time
 // series in pure Go (standard library only, CGO-free).
 //
-// Status: early development — v0.7.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.8.0 released; pre-v1.0, minor versions may
 // still change the API.
 //
 // Implemented:
@@ -40,9 +40,18 @@
 //     distribution P(y | do(x), z), the effect of x on y within the context
 //     z, via do-calculus Rule 2 (an m-separation test) plus the ID algorithm.
 //     Released in v0.7.0.
+//   - Causal-effect identification over an equivalence class — the
+//     Jaber–Zhang–Bareinboim IDP algorithm (IdentifyPAG, or the (*PAG).Identify
+//     method) decides whether P(y | do(x)) is identifiable from a PAG — the
+//     Markov equivalence class FCI returns, not a single asserted diagram —
+//     which is identifiable only when the SAME estimand holds for every graph in
+//     the class. Sound and complete under the no-selection-bias scope. Returns a
+//     symbolic (render-only) estimand; the identifiability DECISION is the
+//     validated guarantee, cross-checked against the reference PAGId
+//     implementation. Released in v0.8.0.
 //
-// Research: identification under selection bias, over an equivalence class (a
-// PAG, the IDP algorithm) rather than a single diagram, and estimation of the
+// Research: identification under selection bias, the conditional effect over a
+// PAG (CIDP), numeric evaluation of the PAG estimand, and estimation of the
 // identified estimand from continuous samples. See the README for the honest
 // roadmap and the assumptions each method rests on: no capability is claimed
 // before it is implemented, validated against ground-truth datasets, and

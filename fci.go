@@ -1,8 +1,18 @@
 package causa
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+)
+
+// PAG construction errors.
+var (
+	// ErrInvalidPAGMark is returned by NewPAG when an edge endpoint is not one of
+	// Circle, Arrow, or Tail (NoMark is not a valid endpoint of a present edge).
+	ErrInvalidPAGMark = errors.New("causa: PAG edge endpoint must be a circle, arrowhead, or tail")
+	// ErrDuplicatePAGEdge is returned by NewPAG when two edges name the same pair.
+	ErrDuplicatePAGEdge = errors.New("causa: duplicate PAG edge")
 )
 
 // Mark is the endpoint mark on one end of a PAG edge. A PAG (see PAG) has three
@@ -82,6 +92,52 @@ type PAG struct {
 	// j; NoMark when i and j are non-adjacent. The matrix is kept consistent:
 	// mark[i][j] == NoMark iff mark[j][i] == NoMark.
 	mark [][]Mark
+}
+
+// NewPAG builds a PAG directly from its edges, for identifying effects (IdentifyPAG)
+// over a partial ancestral graph obtained outside this package — asserted by hand,
+// or discovered by another tool — without re-running FCI. names labels the vertices
+// and fixes their count; each PAGEdge gives an endpoint pair A, B (A ≠ B) with the
+// mark at each end (MarkA at A, MarkB at B), every mark one of Circle, Arrow, or
+// Tail. Report each edge once; a pair may not repeat.
+//
+// The endpoint encoding matches the PAG type: an edge {A, B, Tail, Arrow} is the
+// directed A → B, {A, B, Arrow, Arrow} is the bidirected A ↔ B, {A, B, Circle,
+// Arrow} is A o→ B, and {A, B, Circle, Circle} is A o—o B. NewPAG does not verify
+// that the marks form a valid MAG equivalence class (a maximally informative,
+// consistent PAG); it validates only the structural well-formedness above and
+// trusts the caller for the rest, exactly as NewDiagram trusts an asserted ADMG.
+//
+// Errors: ErrTooFewVariables (no names), ErrEdgeOutOfRange (an endpoint index out
+// of range), ErrSelfLoop (A == B), ErrInvalidPAGMark (a NoMark or unknown endpoint),
+// ErrDuplicatePAGEdge (a repeated pair).
+func NewPAG(names []string, edges []PAGEdge) (*PAG, error) {
+	if len(names) == 0 {
+		return nil, ErrTooFewVariables
+	}
+	n := len(names)
+	m := make([][]Mark, n)
+	for i := range m {
+		m[i] = make([]Mark, n)
+	}
+	valid := func(mk Mark) bool { return mk == Circle || mk == Arrow || mk == Tail }
+	for _, e := range edges {
+		if e.A < 0 || e.A >= n || e.B < 0 || e.B >= n {
+			return nil, ErrEdgeOutOfRange
+		}
+		if e.A == e.B {
+			return nil, ErrSelfLoop
+		}
+		if !valid(e.MarkA) || !valid(e.MarkB) {
+			return nil, ErrInvalidPAGMark
+		}
+		if m[e.A][e.B] != NoMark {
+			return nil, ErrDuplicatePAGEdge
+		}
+		m[e.A][e.B] = e.MarkB // mark at B
+		m[e.B][e.A] = e.MarkA // mark at A
+	}
+	return &PAG{names: append([]string(nil), names...), mark: m}, nil
 }
 
 // Order returns the number of variables (nodes) in the graph.
