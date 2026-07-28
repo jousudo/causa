@@ -376,3 +376,56 @@ func ExampleIdentifyConditionalPAG() {
 	// Z o-> X -> Y          : true
 	// Z -> X -> Y, Z -> Y   : false
 }
+
+// ExamplePAGIDResult_Evaluate turns an identified PAG effect into actual numbers.
+// The PAG A o→ X ← o B, X → Y (two colliders orient arrowheads into X, making X → Y
+// visible) identifies P(Y | do(X)); Evaluate computes it from a discrete
+// observational joint. Because Y's only parent is X, the interventional equals the
+// conditional P(Y | X).
+func ExamplePAGIDResult_Evaluate() {
+	// A=0, B=1, X=2, Y=3.
+	g, _ := causa.NewPAG([]string{"A", "B", "X", "Y"}, []causa.PAGEdge{
+		{A: 0, B: 2, MarkA: causa.Circle, MarkB: causa.Arrow}, // A o→ X
+		{A: 1, B: 2, MarkA: causa.Circle, MarkB: causa.Arrow}, // B o→ X
+		{A: 2, B: 3, MarkA: causa.Tail, MarkB: causa.Arrow},   // X → Y
+	})
+	r, _ := g.Identify([]int{3}, []int{2})
+	fmt.Println("identifiable:", r.Identifiable)
+
+	// A discrete observational joint P(A,B,X,Y), all binary, in mixed-radix order.
+	prob := make([]float64, 16)
+	// P(A),P(B) uniform-ish; P(X=1|A,B) and P(Y=1|X) chosen; build the joint.
+	pX := [4]float64{0.2, 0.5, 0.5, 0.8} // P(X=1 | A,B) keyed A*2+B
+	pY := [2]float64{0.3, 0.9}           // P(Y=1 | X)
+	i := 0
+	for a := 0; a < 2; a++ {
+		for b := 0; b < 2; b++ {
+			for x := 0; x < 2; x++ {
+				for y := 0; y < 2; y++ {
+					px := pX[a*2+b]
+					if x == 0 {
+						px = 1 - px
+					}
+					py := pY[x]
+					if y == 0 {
+						py = 1 - py
+					}
+					prob[i] = 0.25 * px * py // P(A)=P(B)=0.5
+					i++
+				}
+			}
+		}
+	}
+	joint, _ := causa.NewDistribution([]int{2, 2, 2, 2}, prob)
+
+	tab, _ := r.Evaluate(joint)
+	p1, _ := tab.ProbAt(map[int]int{2: 1, 3: 1}) // P(Y=1 | do(X=1))
+	p0, _ := tab.ProbAt(map[int]int{2: 0, 3: 1}) // P(Y=1 | do(X=0))
+	fmt.Printf("P(Y=1 | do(X=1)) = %.4f\n", p1)
+	fmt.Printf("P(Y=1 | do(X=0)) = %.4f\n", p0)
+
+	// Output:
+	// identifiable: true
+	// P(Y=1 | do(X=1)) = 0.9000
+	// P(Y=1 | do(X=0)) = 0.3000
+}

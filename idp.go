@@ -25,17 +25,20 @@ package causa
 // distribution P(y | do(x)) is identifiable across the whole Markov equivalence
 // class the PAG represents, and, when it is, a symbolic estimand.
 //
-// Symbolic-only estimand. Unlike IDResult.Estimand (an ID estimand over a single
-// diagram, which Evaluate turns into numbers), the PAG estimand is provided for
-// RENDERING only. It is the exact Jaber-Zhang-Bareinboim identification formula —
-// a composition of interventional c-factors Q[·] via Propositions 6 and 7 — and it
-// String()s faithfully, but its numeric evaluation semantics (the meaning of the
-// nested Q[T](·|·) terms as functions over the observational P(V)) are NOT part of
-// this release's validated surface. Do not call Estimand.Evaluate on a PAG
-// estimand and rely on the number; the identifiability DECISION is the sound,
-// tested guarantee here.
+// Estimand and numeric evaluation. Estimand is the exact Jaber-Zhang-Bareinboim
+// identification formula — a composition of interventional c-factors Q[·] via
+// Propositions 6 and 7 — which String()s faithfully. To turn it into numbers, use
+// (*PAGIDResult).Evaluate (validated against brute-force truth on random latent
+// SCMs), NOT Estimand.Evaluate directly: the raw c-factor expression carries
+// spectator variables that Evaluate reduces away. The identifiability DECISION and
+// the evaluated numbers are both tested guarantees.
 type PAGIDResult struct {
 	names []string
+
+	// query variables (ascending), recorded so Evaluate can reduce the estimand to
+	// a clean P(y | do(x)[, z]) table: y = outcome, x = intervention, z = context
+	// (nil/empty for a marginal effect).
+	y, x, z []int
 
 	// Identifiable reports whether P(y | do(x)) is identifiable in every MAG of
 	// the equivalence class described by the PAG. When false, no estimand exists
@@ -43,7 +46,7 @@ type PAGIDResult struct {
 	Identifiable bool
 
 	// Estimand is the symbolic identification formula, valid only when
-	// Identifiable. See the type doc: render-only in this release.
+	// Identifiable. See the type doc, and Evaluate for turning it into numbers.
 	Estimand *Expr
 }
 
@@ -82,8 +85,9 @@ func (g *PAG) Identify(y, x []int) (*PAGIDResult, error) {
 // this problem under the library's standing no-selection-bias scope.
 //
 // When Identifiable is false the effect is genuinely not identifiable from the
-// equivalence class — a legitimate answer, not an error. Errors are returned only
-// for malformed queries: ErrEmptyOutcome, ErrEdgeOutOfRange, ErrDuplicateQueryVar,
+// equivalence class — a legitimate answer, not an error. When true, turn the
+// estimand into numbers with (*PAGIDResult).Evaluate. Errors are returned only for
+// malformed queries: ErrEmptyOutcome, ErrEdgeOutOfRange, ErrDuplicateQueryVar,
 // ErrOverlappingQuery.
 //
 // Reference: Jaber, Ribeiro, Zhang & Bareinboim, "Causal Identification under
@@ -112,10 +116,10 @@ func IdentifyPAG(g *PAG, y, x []int) (*PAGIDResult, error) {
 	// Compute Q[d] from Q[V] = P(V), then marginalise down to Y.
 	qd, ok := g.idpIdentify(d, full, jointExpr(allVars))
 	if !ok {
-		return &PAGIDResult{names: g.names, Identifiable: false}, nil
+		return &PAGIDResult{names: g.names, y: y, x: x, Identifiable: false}, nil
 	}
 	est := marginalExpr(maskToSorted(maskDiff(d, ymask)), qd)
-	return &PAGIDResult{names: g.names, Identifiable: true, Estimand: est}, nil
+	return &PAGIDResult{names: g.names, y: y, x: x, Identifiable: true, Estimand: est}, nil
 }
 
 // idpIdentify computes Q[C] — the interventional c-factor Q[C] = P_{V\C}(c) — from

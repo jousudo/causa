@@ -39,9 +39,10 @@ func (g *PAG) IdentifyConditional(y, x, z []int) (*PAGIDResult, error) {
 // the conditional effect.
 //
 // Scope mirrors IdentifyPAG: the identifiability DECISION is the sound, tested
-// guarantee (cross-checked against the reference PAGId::CIDP); the estimand is
-// symbolic and render-only in this release. Errors: ErrEmptyOutcome,
-// ErrEdgeOutOfRange, ErrDuplicateQueryVar, ErrOverlappingQuery.
+// guarantee (cross-checked against the reference PAGId::CIDP), and the estimand is
+// turned into numbers with (*PAGIDResult).Evaluate (validated against brute-force
+// truth on random latent SCMs). Errors: ErrEmptyOutcome, ErrEdgeOutOfRange,
+// ErrDuplicateQueryVar, ErrOverlappingQuery.
 //
 // Reference: Jaber, Ribeiro, Zhang & Bareinboim, "Causal Identification under
 // Markov Equivalence: Calculus, Algorithm, and Completeness", NeurIPS 2022
@@ -78,7 +79,7 @@ func IdentifyConditionalPAG(g *PAG, y, x, z []int) (*PAGIDResult, error) {
 		xprime := maskIntersect(bi, xmask)
 		w := maskDiff(xmask, xprime)
 		if !g.rule2(xprime, ymask, zmask, w) {
-			return &PAGIDResult{names: g.names, Identifiable: false}, nil
+			return &PAGIDResult{names: g.names, y: y, x: x, z: z, Identifiable: false}, nil
 		}
 		xmask = w
 		zmask = maskUnion(zmask, xprime)
@@ -110,10 +111,10 @@ func IdentifyConditionalPAG(g *PAG, y, x, z []int) (*PAGIDResult, error) {
 		return nil, err
 	}
 	if !inner.Identifiable {
-		return &PAGIDResult{names: g.names, Identifiable: false}, nil
+		return &PAGIDResult{names: g.names, y: y, x: x, z: z, Identifiable: false}, nil
 	}
 	den := marginalExpr(maskToSorted(ymask), inner.Estimand)
-	return &PAGIDResult{names: g.names, Identifiable: true, Estimand: ratioExpr(inner.Estimand, den)}, nil
+	return &PAGIDResult{names: g.names, y: y, x: x, z: z, Identifiable: true, Estimand: ratioExpr(inner.Estimand, den)}, nil
 }
 
 // straddlingBucket returns the first bucket that meets d but is not contained in it

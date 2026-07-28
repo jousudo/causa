@@ -257,3 +257,34 @@ func BenchmarkIdentifyConditionalPAG_chain(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkEvaluatePAG(b *testing.B) {
+	// A o→ X ← o B, X → Y: identifiable, then evaluate P(Y|do(X)) on a discrete joint.
+	g, err := causa.NewPAG([]string{"A", "B", "X", "Y"}, []causa.PAGEdge{
+		{A: 0, B: 2, MarkA: causa.Circle, MarkB: causa.Arrow},
+		{A: 1, B: 2, MarkA: causa.Circle, MarkB: causa.Arrow},
+		{A: 2, B: 3, MarkA: causa.Tail, MarkB: causa.Arrow},
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	r, err := g.Identify([]int{3}, []int{2})
+	if err != nil {
+		b.Fatal(err)
+	}
+	prob := make([]float64, 16)
+	for i := range prob {
+		prob[i] = 1.0 / 16.0
+	}
+	joint, err := causa.NewDistribution([]int{2, 2, 2, 2}, prob)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := r.Evaluate(joint); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
