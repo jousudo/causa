@@ -41,8 +41,10 @@ func (g *PAG) IdentifyConditional(y, x, z []int) (*PAGIDResult, error) {
 // Scope mirrors IdentifyPAG: the identifiability DECISION is the sound, tested
 // guarantee (cross-checked against the reference PAGId::CIDP), and the estimand is
 // turned into numbers with (*PAGIDResult).Evaluate (validated against brute-force
-// truth on random latent SCMs). Errors: ErrEmptyOutcome, ErrEdgeOutOfRange,
-// ErrDuplicateQueryVar, ErrOverlappingQuery.
+// truth on random latent SCMs). A PAG with an undirected (—) edge is refused with
+// ErrSelectionBiasUnsupported, mirroring IdentifyPAG: identification under selection
+// bias is out of scope. Errors: ErrEmptyOutcome, ErrEdgeOutOfRange,
+// ErrDuplicateQueryVar, ErrOverlappingQuery, ErrSelectionBiasUnsupported.
 //
 // Reference: Jaber, Ribeiro, Zhang & Bareinboim, "Causal Identification under
 // Markov Equivalence: Calculus, Algorithm, and Completeness", NeurIPS 2022
@@ -51,6 +53,9 @@ func IdentifyConditionalPAG(g *PAG, y, x, z []int) (*PAGIDResult, error) {
 	n := g.Order()
 	if err := validateConditionalQuery(n, y, x, z); err != nil {
 		return nil, err
+	}
+	if hasUndirectedEdge(g) {
+		return nil, ErrSelectionBiasUnsupported
 	}
 	if len(z) == 0 {
 		return IdentifyPAG(g, y, x)

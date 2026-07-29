@@ -23,6 +23,14 @@ var (
 	// ErrDuplicateQueryVar is returned by Identify when X or Y lists the same
 	// variable twice.
 	ErrDuplicateQueryVar = errors.New("causa: duplicate variable in a query set")
+	// ErrSelectionBiasUnsupported is returned by IdentifyPAG / IdentifyConditionalPAG
+	// (and their PAG methods) when the input PAG carries an undirected (—, tail–tail)
+	// edge. Such an edge records selection bias, which FCI produces only in its
+	// opt-in SelectionBias mode. The IDP/CIDP identification algorithms are sound and
+	// complete only under the no-selection-bias scope, so rather than run them on a
+	// selection PAG and return a silently wrong estimand, they refuse. Identification
+	// of causal effects UNDER selection bias is a separate problem, not yet supported.
+	ErrSelectionBiasUnsupported = errors.New("causa: identification over a PAG with selection bias (an undirected — edge) is not supported")
 )
 
 // Diagram is a causal diagram — an acyclic directed mixed graph (ADMG), the

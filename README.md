@@ -2,7 +2,7 @@
 
 Causal inference for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.12.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.13.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
 > `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
 > FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, the Shpitser–Pearl ID
@@ -11,8 +11,9 @@ Causal inference for Go. Pure standard library. Zero dependencies.
 > identification over a PAG (an equivalence class) in `v0.8.0`, the CIDP
 > algorithm for conditional identification over a PAG in `v0.9.0`, numeric
 > evaluation of the PAG estimand in `v0.10.0`, continuous (linear-Gaussian)
-> estimand evaluation in `v0.11.0`, and bootstrap uncertainty quantification of the
-> evaluated effect in `v0.12.0`.
+> estimand evaluation in `v0.11.0`, bootstrap uncertainty quantification of the
+> evaluated effect in `v0.12.0`, and opt-in selection-bias discovery (FCI rules
+> R5–R7) in `v0.13.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -47,15 +48,16 @@ anywhere Go runs.
 | Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Released in `v0.2.0`** — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
 | Directional discovery | DirectLiNGAM (deterministic, non-Gaussian noise) → causal order + weighted DAG | **Released in `v0.3.0`** — ground-truth-validated and benchmarked; identifies a fully directed model when the noise is non-Gaussian (see below) |
 | Interventions / counterfactuals | Linear SEM + do-operator (forward substitution; Pearl abduction–action–prediction) | **Released in `v0.4.0`** — exact for a fully specified linear SEM; the general do-calculus *identification* problem (latent confounders) remains research (see below) |
-| Latent-confounder discovery | FCI (Possible-D-SEP + Zhang's rules) → PAG | **Released in `v0.5.0`** — ground-truth-validated and benchmarked; drops causal sufficiency, reporting latent common causes as bidirected (↔) edges; assumes no selection bias (see below) |
+| Latent-confounder discovery | FCI (Possible-D-SEP + Zhang's rules) → PAG | **Released in `v0.5.0`** — ground-truth-validated and benchmarked; drops causal sufficiency, reporting latent common causes as bidirected (↔) edges; no selection bias by default, opt-in since `v0.13.0` (see below) |
 | Causal-effect identification | Shpitser–Pearl ID → symbolic estimand + discrete evaluator | **Released in `v0.6.0`** — validated against brute-force truth on random latent SCMs; decides identifiability of `P(y \| do(x))` in a diagram with latent confounders, or proves non-identifiability with a hedge (see below) |
 | Conditional-effect identification | Shpitser–Pearl IDC (do-calculus Rule 2 + m-separation + ID) | **Released in `v0.7.0`** — validated against brute-force truth on random latent SCMs; identifies `P(y \| do(x), z)`, the effect of `x` on `y` within a context `z` (see below) |
-| Identification over an equivalence class | Jaber–Zhang–Bareinboim IDP (pc-components + regions, Prop. 6/7 over induced PAGs) | **Released in `v0.8.0`** — decides identifiability of `P(y \| do(x))` from a **PAG** (what FCI returns), not a single asserted diagram; decision cross-checked case-for-case against the reference `PAGId` implementation; symbolic (render-only) estimand; assumes no selection bias (see below) |
-| Conditional identification over an equivalence class | Jaber–Zhang–Bareinboim CIDP (PAG do-calculus Rule 2 + definite-status m-separation + IDP) | **Released in `v0.9.0`** — decides identifiability of `P(y \| do(x), z)` from a **PAG**, the contextual effect; decision cross-checked against `PAGId::CIDP`; assumes no selection bias (see below) |
+| Identification over an equivalence class | Jaber–Zhang–Bareinboim IDP (pc-components + regions, Prop. 6/7 over induced PAGs) | **Released in `v0.8.0`** — decides identifiability of `P(y \| do(x))` from a **PAG** (what FCI returns), not a single asserted diagram; decision cross-checked case-for-case against the reference `PAGId` implementation; symbolic (render-only) estimand; refuses a selection-bias PAG (see below) |
+| Conditional identification over an equivalence class | Jaber–Zhang–Bareinboim CIDP (PAG do-calculus Rule 2 + definite-status m-separation + IDP) | **Released in `v0.9.0`** — decides identifiability of `P(y \| do(x), z)` from a **PAG**, the contextual effect; decision cross-checked against `PAGId::CIDP`; refuses a selection-bias PAG (see below) |
 | Numeric evaluation of a PAG effect | Discrete evaluator over the identified IDP/CIDP estimand | **Released in `v0.10.0`** — turns an identified PAG effect into the interventional table `P(y \| do(x)[, z])` from a discrete joint; validated against brute-force truth on random latent SCMs (PAG per SCM via an oracle FCI) |
 | Continuous (linear-Gaussian) evaluation | Canonical-form Gaussian factor algebra over the identified estimand (`Expr.EvaluateGaussian`) | **Released in `v0.11.0`** — evaluates an identified estimand on a *normal* observational joint, returning `P(y \| do(x))` as a Gaussian; exact for a linear-Gaussian model; validated against the closed-form structural effect (`SEM.TotalEffect`) on random latent SCMs |
 | Uncertainty quantification | Nonparametric bootstrap over the evaluated effect (`Bootstrap`, `Expr.BootstrapGaussianEffect`) + distribution fitting (`SampleGaussian`, `SampleDistribution`) | **Released in `v0.12.0`** — resamples the data to turn a point-estimated causal effect into a confidence interval; validated by its *coverage* on known linear-Gaussian SCMs (a nominal 95% interval covers the truth ≈95% of the time) |
-| Selection bias | Zhang's rules R5–R7 in FCI + selection in IDP/CIDP identification | Research (`v0.13.0`) — the largest, most independent step; least immediate value, highest risk |
+| Selection-bias discovery | Zhang's rules R5–R7 in FCI (opt-in `FCIOptions.SelectionBias`) → PAG with undirected (`—`) edges | **Released in `v0.13.0`** — admits selection bias into discovery, sound and complete for the class that also permits selection (Zhang 2008); off by default (PAG byte-identical to earlier versions) |
+| Identification *under* selection bias | Recovering `P(y \| do(x))` from a selection-biased PAG (IDP/CIDP) | Research — genuinely unpublished for the PAG/IDP setting; for now the identifiers **refuse** a PAG with an `—` edge (`ErrSelectionBiasUnsupported`) rather than return a wrong estimand |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
 causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
@@ -153,19 +155,28 @@ R8–R10**, applied to closure: R1–R3 propagate arrowheads that would otherwis
 collider or cycle, R4 is the discriminating-path rule, and R8–R10 add the compelled *tails* that
 distinguish a definite `→` from an `o→`.
 
-**Scope — no selection bias.** This implementation assumes the sampling process induces no
-selection (no conditioning by how the data were collected). It therefore never produces tail–tail
-(`—`) edges, and **Zhang's selection-bias rules R5–R7 are deliberately omitted** — on a
-no-selection PAG they can never fire, and running them could only introduce spurious `—` edges.
-R1–R4 and R8–R10 are the sound **and complete** rule set for this class, so the PAG is maximally
-informative under the stated assumption. Admitting selection bias is a strictly larger problem and
-is out of scope here — stated plainly rather than left for a user to discover.
+**Selection bias — off by default, opt-in since `v0.13.0`.** By default FCI assumes the sampling
+process induces no selection (no conditioning by how the data were collected): it runs R1–R4 and
+R8–R10, the sound **and complete** rule set for the latent-confounder-only class, and never
+produces a tail–tail (`—`) edge. Setting `FCIOptions{SelectionBias: true}` admits selection bias
+by additionally running **Zhang's rules R5, R6 and R7** — the only rules that introduce `—` edges.
+An `—` edge records an ancestral relation to a latent **selection variable** (a variable the
+sampling implicitly conditioned on), so under this mode a tail at `A` on `A — B` means `A` is an
+ancestor of `B` *or of a selection variable*. The skeleton, collider and R1–R4/R8–R10 phases are
+identical in both modes; on data with no selection bias the two return the **same** PAG (R5–R7 have
+nothing to fire on), so the flag is safe to leave off and free to turn on. The result is again sound
+and complete (Zhang 2008) for the larger class that permits selection.
+
+Note the downstream identifiers **do not** yet handle selection: `IdentifyPAG` / `IdentifyConditionalPAG`
+refuse a PAG carrying an `—` edge with `ErrSelectionBiasUnsupported` rather than return a silently
+wrong estimand (identification *under* selection bias is a separate, unpublished-for-this-setting
+problem — see the roadmap).
 
 **Assumptions** (stated because, as everywhere here, violating them silently returns a plausible
 but wrong graph): *faithfulness*, a correct CI test (the default `FisherZTest` assumes
-linear-Gaussian data), and the *no-selection-bias* scope above. Causal sufficiency is **not**
-required — that is the entire point. The honest small-sample cap carries over from PC: conditioning
-sets stop growing once `n − |S| − 3 < 1`.
+linear-Gaussian data), and — unless `SelectionBias` is set — no selection bias. Causal sufficiency
+is **not** required — that is the entire point. The honest small-sample cap carries over from PC:
+conditioning sets stop growing once `n − |S| − 3 < 1`.
 
 Reference: Spirtes, Glymour & Scheines, *Causation, Prediction, and Search* (2nd ed., 2000), ch. 6
 (FCI, Possible-D-SEP); Zhang, "On the completeness of orientation rules for causal discovery in the
@@ -363,7 +374,11 @@ whether `P(y | do(x))` is identifiable directly from a **PAG** — the Markov eq
 autonomous system actually needs: when the graph itself was *learned from data*, the honest question
 is not "is the effect identifiable in one graph I picked?" but "is it identifiable in **every** graph
 the data leaves possible?" It is the Jaber–Zhang–Bareinboim IDP algorithm, sound and complete for
-this problem under the no-selection-bias scope.
+this problem under the no-selection-bias scope. A PAG carrying an undirected (`—`) edge is outside
+that scope — such edges encode selection bias (which `FCI` produces only in its opt-in
+`SelectionBias` mode) — so `IdentifyPAG` and `IdentifyConditionalPAG` **refuse** it with
+`ErrSelectionBiasUnsupported` rather than return a silently wrong estimand; identification *under*
+selection bias is deferred (see the roadmap).
 
 The difficulty over a single diagram is the circle mark. An edge `X o→ Y` leaves open both `X → Y`
 (where `do(x)` matters) and `X ↔ Y` (where it does not); the two disagree on `P(y | do(x))`, so the
@@ -388,7 +403,8 @@ fmt.Println(r.Identifiable) // true
 cross-checked case-for-case against the authors' reference `PAGId` implementation on byte-identical
 adjacency matrices — together with the symbolic Prop. 6/7 estimand. To turn it into numbers, call
 `(*PAGIDResult).Evaluate` (see below); the raw `Estimand` is the exact formula and `String()`s
-faithfully. Out of scope for now: — as everywhere in this library — selection bias. Reference: Jaber,
+faithfully. Out of scope for now: identification *under* selection bias — a selection-biased PAG
+(one with an `—` edge, as `FCI`'s `SelectionBias` mode can produce) is refused, not identified. Reference: Jaber,
 Ribeiro, Zhang & Bareinboim, "Causal Identification under Markov Equivalence: Calculus, Algorithm, and
 Completeness" (NeurIPS 2022).
 

@@ -82,13 +82,18 @@ func (g *PAG) Identify(y, x []int) (*PAGIDResult, error) {
 // some edges undetermined (the circle marks). An effect is IDP-identifiable only
 // when the SAME estimand is valid for every MAG in the class; a single circle can
 // be the difference between identifiable and not. IDP is sound and complete for
-// this problem under the library's standing no-selection-bias scope.
+// this problem under the library's standing no-selection-bias scope. A PAG that
+// carries an undirected (—, tail–tail) edge is OUTSIDE that scope — such edges
+// encode selection bias (FCI emits them only in its opt-in SelectionBias mode) —
+// so IdentifyPAG refuses it with ErrSelectionBiasUnsupported rather than return a
+// silently wrong estimand; identification UNDER selection bias is a separate,
+// not-yet-supported problem.
 //
 // When Identifiable is false the effect is genuinely not identifiable from the
 // equivalence class — a legitimate answer, not an error. When true, turn the
-// estimand into numbers with (*PAGIDResult).Evaluate. Errors are returned only for
-// malformed queries: ErrEmptyOutcome, ErrEdgeOutOfRange, ErrDuplicateQueryVar,
-// ErrOverlappingQuery.
+// estimand into numbers with (*PAGIDResult).Evaluate. Errors are returned for a
+// malformed query (ErrEmptyOutcome, ErrEdgeOutOfRange, ErrDuplicateQueryVar,
+// ErrOverlappingQuery) or a selection-bias PAG (ErrSelectionBiasUnsupported).
 //
 // Reference: Jaber, Ribeiro, Zhang & Bareinboim, "Causal Identification under
 // Markov Equivalence: Calculus, Algorithm, and Completeness", NeurIPS 2022;
@@ -98,6 +103,9 @@ func IdentifyPAG(g *PAG, y, x []int) (*PAGIDResult, error) {
 	n := g.Order()
 	if err := validateQuery(n, y, x); err != nil {
 		return nil, err
+	}
+	if hasUndirectedEdge(g) {
+		return nil, ErrSelectionBiasUnsupported
 	}
 	ymask := maskFromSlice(n, y)
 	xmask := maskFromSlice(n, x)
@@ -120,6 +128,23 @@ func IdentifyPAG(g *PAG, y, x []int) (*PAGIDResult, error) {
 	}
 	est := marginalExpr(maskToSorted(maskDiff(d, ymask)), qd)
 	return &PAGIDResult{names: g.names, y: y, x: x, Identifiable: true, Estimand: est}, nil
+}
+
+// hasUndirectedEdge reports whether g carries any undirected (—, tail–tail) edge —
+// a tail at BOTH ends of an adjacency. Such edges encode selection bias (FCI emits
+// them only in SelectionBias mode); their presence puts the PAG outside the IDP/CIDP
+// no-selection-bias scope, so the identify entry points refuse via
+// ErrSelectionBiasUnsupported rather than compute a silently wrong estimand.
+func hasUndirectedEdge(g *PAG) bool {
+	n := g.Order()
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			if g.mark[i][j] == Tail && g.mark[j][i] == Tail {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // idpIdentify computes Q[C] — the interventional c-factor Q[C] = P_{V\C}(c) — from

@@ -1,7 +1,7 @@
 // Package causa provides causal inference and causal discovery for time
 // series in pure Go (standard library only, CGO-free).
 //
-// Status: early development — v0.12.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.13.0 released; pre-v1.0, minor versions may
 // still change the API.
 //
 // Implemented:
@@ -27,8 +27,10 @@
 //     algorithm (FCI) returning a Partial Ancestral Graph (PAG). Unlike
 //     PCStable it does NOT assume causal sufficiency: unobserved common causes
 //     are admitted and reported as bidirected (↔) edges, recovered via
-//     Possible-D-SEP refinement and Zhang's complete orientation rules
-//     (assuming no selection bias). Released in v0.5.0.
+//     Possible-D-SEP refinement and Zhang's complete orientation rules.
+//     No selection bias by default; the opt-in FCIOptions.SelectionBias mode
+//     (v0.13.0) adds Zhang's rules R5–R7 and undirected (—) selection edges.
+//     Released in v0.5.0.
 //   - Causal-effect identification — the Shpitser–Pearl ID algorithm
 //     (Identify) decides whether an interventional distribution P(y | do(x)) is
 //     identifiable from the observational distribution in a causal diagram with
@@ -78,9 +80,19 @@
 //     slope. Validated by its coverage on known linear-Gaussian SCMs — a nominal
 //     95% interval covers the true effect about 95% of the time. Released in
 //     v0.12.0.
+//   - Selection-bias causal discovery — the opt-in FCIOptions.SelectionBias mode
+//     admits selection bias into FCI by adding Zhang's orientation rules R5, R6 and
+//     R7, the only rules that produce undirected (—, tail–tail) edges (an ancestral
+//     relation to a latent selection variable). Sound and complete for the class
+//     that also permits selection (Zhang 2008); off by default, where the PAG is
+//     byte-identical to earlier versions. The IDP/CIDP identifiers, sound only under
+//     no selection, refuse a PAG carrying an — edge (ErrSelectionBiasUnsupported)
+//     rather than return a wrong estimand. Released in v0.13.0.
 //
-// Research: identification under selection bias. See the README for the honest
-// roadmap and the assumptions each method rests on: no capability is claimed
-// before it is implemented, validated against ground-truth datasets, and
-// benchmarked.
+// Research: identification of effects UNDER selection bias (recovering P(y | do(x))
+// when the data itself is selection-biased) — discovery now handles selection
+// (v0.13.0), but the identification algorithms deliberately refuse it. See the
+// README for the honest roadmap and the assumptions each method rests on: no
+// capability is claimed before it is implemented, validated against ground-truth
+// datasets, and benchmarked.
 package causa

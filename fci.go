@@ -228,6 +228,20 @@ type FCIOptions struct {
 	// linear-Gaussian default). See CITest for the contract a custom test must
 	// satisfy.
 	CITest CITest
+
+	// SelectionBias, when true, admits selection bias: FCI additionally applies
+	// Zhang's orientation rules R5, R6 and R7, the only rules that can introduce
+	// undirected (—, tail–tail) edges. An undirected edge records an ancestral
+	// relation to a latent SELECTION variable — a variable the sampling process
+	// implicitly conditioned on — so under this mode a Tail at α on α—β means α is
+	// an ancestor of β OR of a selection variable, not β alone.
+	//
+	// The default (false) keeps the standing no-selection-bias scope: R5–R7 never
+	// run, no — edge is ever produced, and the returned PAG is byte-identical to
+	// what earlier versions returned. Turning it on when the data has no selection
+	// bias is harmless — R5–R7 have nothing to fire on — but it is not free, so it
+	// stays opt-in.
+	SelectionBias bool
 }
 
 // FCI runs the Fast Causal Inference algorithm of Spirtes, Glymour & Scheines and
@@ -264,14 +278,17 @@ type FCIOptions struct {
 //  5. Orientation to completeness. Zhang's rules R1–R4 and R8–R10 are applied to
 //     closure, propagating arrowheads and tails without contradiction.
 //
-// Scope: no selection bias. This implementation assumes there is no selection
-// bias (no conditioning induced by the sampling process). It therefore never
-// produces tail–tail (—) edges, and Zhang's selection-bias rules R5–R7 — which
-// exist only to handle them — are intentionally omitted: on a no-selection PAG
-// they never fire, and running them could wrongly introduce — edges. R1–R4 and
-// R8–R10 are the sound and COMPLETE rule set for this class, so the returned PAG
-// is maximally informative under the stated assumption. Admitting selection bias
-// is a strictly larger problem and out of scope here.
+// Selection bias. By default this assumes there is NO selection bias (no
+// conditioning induced by the sampling process): it runs Zhang's rules R1–R4 and
+// R8–R10, the sound and COMPLETE set for the latent-confounder-only class, and
+// never produces a tail–tail (—) edge. Setting FCIOptions.SelectionBias admits
+// selection bias by additionally running R5, R6 and R7 — the only rules that
+// produce — edges — which is again sound and complete (Zhang 2008) for the larger
+// class that also permits latent selection variables. The skeleton, collider and
+// R1–R4/R8–R10 phases are identical in both modes; only the extra three rules and
+// the interpretation of a Tail differ (see FCIOptions.SelectionBias). On data
+// with no selection bias the two modes return the identical PAG, R5–R7 having
+// nothing to fire on.
 //
 // Determinism. Every phase iterates variable indices, enumerates subsets in
 // lexicographic order, and searches paths in index order; there is no dependence
@@ -331,6 +348,7 @@ func FCI(data [][]float64, names []string, opts *FCIOptions) (*PAG, error) {
 	alpha := 0.05
 	maxCond := 0
 	ci := CITest(FisherZTest)
+	selection := false
 	if opts != nil {
 		if opts.Alpha != 0 {
 			if opts.Alpha <= 0 || opts.Alpha >= 1 {
@@ -344,6 +362,7 @@ func FCI(data [][]float64, names []string, opts *FCIOptions) (*PAG, error) {
 		if opts.CITest != nil {
 			ci = opts.CITest
 		}
+		selection = opts.SelectionBias
 	}
 
 	// Phase 1: PC-stable skeleton (shared with PCStable).
@@ -376,7 +395,7 @@ func FCI(data [][]float64, names []string, opts *FCIOptions) (*PAG, error) {
 	orientCollidersPAG(m, sepset, p)
 
 	// Phase 5: Zhang's orientation rules to closure.
-	applyFCIRules(m, sepset, p)
+	applyFCIRules(m, sepset, p, selection)
 
 	return &PAG{names: names, mark: m}, nil
 }
@@ -590,11 +609,13 @@ func resetToCircles(m [][]Mark, p int) {
 
 // --- Zhang orientation rules (R1–R4, R8–R10) -----------------------------
 
-// applyFCIRules applies Zhang's orientation rules to closure. R5–R7 are omitted
-// by design (see FCI's scope note: no selection bias). Each rule scans every
-// applicable tuple and reports whether it changed a mark; the loop repeats until
-// a full pass changes nothing.
-func applyFCIRules(m [][]Mark, sepset [][][]int, p int) {
+// applyFCIRules applies Zhang's orientation rules to closure. R5, R6 and R7 — the
+// selection-bias rules, the only ones that produce undirected (—) edges — run only
+// when selection is true; with selection false they are omitted by design (the
+// no-selection-bias scope) and no — edge is ever produced. Each rule scans every
+// applicable tuple and reports whether it changed a mark; the loop repeats until a
+// full pass changes nothing.
+func applyFCIRules(m [][]Mark, sepset [][][]int, p int, selection bool) {
 	for changed := true; changed; {
 		changed = false
 		if ruleR1(m, p) {
@@ -609,6 +630,17 @@ func applyFCIRules(m [][]Mark, sepset [][][]int, p int) {
 		if ruleR4(m, sepset, p) {
 			changed = true
 		}
+		if selection {
+			if ruleR5(m, p) {
+				changed = true
+			}
+			if ruleR6(m, p) {
+				changed = true
+			}
+			if ruleR7(m, p) {
+				changed = true
+			}
+		}
 		if ruleR8(m, p) {
 			changed = true
 		}
@@ -619,6 +651,31 @@ func applyFCIRules(m [][]Mark, sepset [][][]int, p int) {
 			changed = true
 		}
 	}
+}
+
+// --- selection-bias mark helpers (R5–R7) ---------------------------------
+
+// isUndirected reports whether a-b is an undirected (—, tail–tail) edge: a tail at
+// each end. These arise only under selection bias (R5), and R6/R7 consume them.
+func isUndirected(m [][]Mark, a, b int) bool {
+	return fciAdjacent(m, a, b) && isTail(m, a, b) && isTail(m, b, a)
+}
+
+// isCircleBoth reports whether a-b is a wholly undetermined o—o edge (a circle at
+// each end) — the only edges R5 threads its circle path through and the only edge
+// it re-orients to undirected.
+func isCircleBoth(m [][]Mark, a, b int) bool {
+	return isCircle(m, a, b) && isCircle(m, b, a)
+}
+
+// setUndirected orients a-b as undirected (—) by placing a tail at both ends,
+// returning whether anything changed. Only ever called on an existing o—o edge.
+func setUndirected(m [][]Mark, a, b int) bool {
+	changed := orientEdge(m, a, b, Tail) // tail at a
+	if orientEdge(m, b, a, Tail) {       // tail at b
+		changed = true
+	}
+	return changed
 }
 
 // ruleR1: if a *→ b and b o—* c with a, c non-adjacent, orient b → c (the
@@ -806,6 +863,148 @@ func dpExtend(m [][]Mark, p, cur, succ, c int, visited []bool) (bool, int) {
 		}
 	}
 	return false, -1
+}
+
+// ruleR5: for every a o—o b, if there is an uncovered CIRCLE path
+// ⟨a, γ, …, θ, b⟩ (every edge o—o, every consecutive triple unshielded) with a and
+// θ non-adjacent and b and γ non-adjacent, orient a—b and every edge on that path
+// as undirected (—, tail at both ends). The two endpoint conditions make the whole
+// cycle a—γ—…—θ—b—a uncovered, which is what forces the tails: any arrowhead on it
+// would create an unshielded collider the skeleton did not license. This is the
+// sole source of tail–tail edges and fires only under selection bias.
+func ruleR5(m [][]Mark, p int) bool {
+	changed := false
+	for a := 0; a < p; a++ {
+		for b := a + 1; b < p; b++ {
+			if !isCircleBoth(m, a, b) { // need a o—o b
+				continue
+			}
+			path := r5CirclePath(m, p, a, b)
+			if path == nil {
+				continue
+			}
+			if setUndirected(m, a, b) {
+				changed = true
+			}
+			for k := 0; k+1 < len(path); k++ {
+				if setUndirected(m, path[k], path[k+1]) {
+					changed = true
+				}
+			}
+		}
+	}
+	return changed
+}
+
+// r5CirclePath returns an uncovered circle path witnessing R5 for the edge a o—o b,
+// as a node slice from a to b, or nil if none exists. Every edge on it is o—o and
+// every consecutive triple ⟨x, y, z⟩ is unshielded (x, z non-adjacent); the second
+// node is non-adjacent to b and the second-to-last is non-adjacent to a (R5's
+// endpoint conditions). The direct a–b edge is never used as a step — the path has
+// an interior. Searched depth-first in index order, so the witness is deterministic.
+func r5CirclePath(m [][]Mark, p, a, b int) []int {
+	visited := make([]bool, p)
+	visited[a] = true
+	var path []int
+	var dfs func(prev, cur int) []int
+	dfs = func(prev, cur int) []int {
+		for next := 0; next < p; next++ {
+			if visited[next] || next == cur || next == prev {
+				continue
+			}
+			if !isCircleBoth(m, cur, next) {
+				continue
+			}
+			if fciAdjacent(m, prev, next) { // uncovered: prev and next non-adjacent
+				continue
+			}
+			if next == b {
+				if fciAdjacent(m, a, cur) { // θ = cur must be non-adjacent to a
+					continue
+				}
+				return append(append([]int(nil), path...), b)
+			}
+			visited[next] = true
+			path = append(path, next)
+			if res := dfs(cur, next); res != nil {
+				return res
+			}
+			path = path[:len(path)-1]
+			visited[next] = false
+		}
+		return nil
+	}
+	// First step a → γ: γ must be non-adjacent to b (R5's other endpoint condition).
+	for g := 0; g < p; g++ {
+		if g == a || g == b || !isCircleBoth(m, a, g) {
+			continue
+		}
+		if fciAdjacent(m, b, g) {
+			continue
+		}
+		visited[g] = true
+		path = []int{a, g}
+		if res := dfs(a, g); res != nil {
+			return res
+		}
+		visited[g] = false
+	}
+	return nil
+}
+
+// ruleR6: if a — b o—* c (a—b undirected), the mark at b on b-c cannot be an
+// arrowhead, so orient b —* c (place a tail at b). c may or may not be adjacent to
+// a.
+func ruleR6(m [][]Mark, p int) bool {
+	changed := false
+	for b := 0; b < p; b++ {
+		for c := 0; c < p; c++ {
+			if b == c || !fciAdjacent(m, b, c) || !isCircle(m, b, c) {
+				continue // need b o—* c (circle at b)
+			}
+			for a := 0; a < p; a++ {
+				if a == b || a == c {
+					continue
+				}
+				if isUndirected(m, a, b) { // a — b
+					if orientEdge(m, b, c, Tail) { // tail at b: b —* c
+						changed = true
+					}
+					break
+				}
+			}
+		}
+	}
+	return changed
+}
+
+// ruleR7: if a —o b o—* c with a and c non-adjacent, orient b —* c (place a tail at
+// b). "a —o b" is a tail at a and a circle at b.
+func ruleR7(m [][]Mark, p int) bool {
+	changed := false
+	for b := 0; b < p; b++ {
+		for c := 0; c < p; c++ {
+			if b == c || !fciAdjacent(m, b, c) || !isCircle(m, b, c) {
+				continue // need b o—* c (circle at b)
+			}
+			for a := 0; a < p; a++ {
+				if a == b || a == c {
+					continue
+				}
+				if !fciAdjacent(m, a, b) || !isTail(m, a, b) || !isCircle(m, b, a) {
+					continue // need a —o b (tail at a, circle at b)
+				}
+				if fciAdjacent(m, a, c) { // a and c must be non-adjacent
+					continue
+				}
+				if orientEdge(m, b, c, Tail) { // tail at b: b —* c
+					changed = true
+				}
+				break
+			}
+		}
+	}
+	return changed
 }
 
 // ruleR8: if a → b → c or a —o b → c, and a o→ c, orient a → c (add the tail at
