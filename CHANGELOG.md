@@ -6,6 +6,40 @@ source or behavioral incompatibility explicitly.
 
 ## [Unreleased]
 
+## [v0.16.0] - 2026-08-16
+
+### Added
+
+- Companion-matrix VAR stability diagnostics with a stdlib-only shifted-QR
+  eigensolver and explicit `stable`, `unstable`, or `indeterminate` status near
+  the unit circle.
+- Adjusted and unadjusted multivariate Portmanteau residual-whiteness tests with
+  chi-square calibration and model-order-aware degrees of freedom.
+- All-directions conditional Granger scans with Holm family-wise correction by
+  default, Benjamini-Hochberg and unadjusted opt-ins, and adjusted findings.
+- General-purpose `AdjustPValues` for validated Holm, Benjamini-Hochberg, or
+  unchanged p-value families while preserving caller order.
+- An independent base-R oracle covering companion roots, both Portmanteau
+  variants, ordered Granger p-values, Holm, and Benjamini-Hochberg.
+- Dense known-spectrum, near-unit-boundary, misspecification, cancellation,
+  budget, singularity, example, fuzz, and benchmark coverage.
+
+### Reliability
+
+- Stability rejects companion dimensions above the reviewed default cell budget
+  before allocation and bounds QR iterations with an explicit convergence error.
+- Granger scans reject oversized test families before fitting, reuse the common
+  design, support cooperative cancellation, and never return partial findings.
+- P-values, alpha levels, and adjustment selectors are validated; Holm remains
+  the conservative zero-value default under dependent pair tests.
+
+### Compatibility
+
+- This release is additive. Existing pairwise Granger, VAR fitting, lag
+  selection, single-direction conditional tests, and bootstrap behavior remain.
+- The v0.15 temporal assumptions are unchanged: these APIs are predictive, not
+  structural, and do not repair hidden causes, unit roots, or regime changes.
+
 ## [v0.15.0] - 2026-08-16
 
 ### Added

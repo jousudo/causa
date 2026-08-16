@@ -5,7 +5,7 @@
 
 Causal discovery, identification, and estimation for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.15.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.16.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
 > `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
 > FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, the Shpitser–Pearl ID
@@ -17,8 +17,9 @@ Causal discovery, identification, and estimation for Go. Pure standard library. 
 > estimand evaluation in `v0.11.0`, bootstrap uncertainty quantification of the
 > evaluated effect in `v0.12.0`, and opt-in selection-bias discovery (FCI rules
 > R5–R7) in `v0.13.0`, bounded discovery, bootstrap, and dense-state
-> execution in `v0.14.0`, and multivariate VAR/conditional Granger plus
-> dependence-preserving bootstrap in `v0.15.0`.
+> execution in `v0.14.0`, multivariate VAR/conditional Granger plus
+> dependence-preserving bootstrap in `v0.15.0`, and temporal validity diagnostics plus
+> multiplicity-safe Granger scans in `v0.16.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -54,7 +55,7 @@ The algorithms are composable, but their sampling assumptions are not interchang
 | API family | Expected input | Load-bearing assumptions |
 |---|---|---|
 | `GrangerTest` | Two aligned chronological series | Appropriate lag order and approximately stationary innovation process |
-| `FitVAR`, `SelectVARLags`, `VARGrangerTest` | Aligned multivariate chronological series | Linear reduced-form VAR, covariance stationarity, adequate lags, innovation residuals |
+| VAR fitting, stability/whiteness diagnostics, and `VARGrangerTest` / `VARGrangerScan` | Aligned multivariate chronological series | Linear reduced-form VAR, covariance stationarity, adequate lags, innovation residuals, multiplicity control for scans |
 | `MovingBlockBootstrap`, `StationaryBootstrap` | Ordered observations from one approximately stationary process | Weak dependence and a scientifically defensible block length |
 | `PCStable`, `FCI` | Variables observed over independent rows | Valid conditional-independence test, faithfulness; PC also requires causal sufficiency |
 | `DirectLiNGAM` | Independent observational rows | Linear acyclic model, causal sufficiency, mutually independent non-Gaussian noise |
@@ -80,8 +81,13 @@ workloads can additionally bound the expensive paths:
 - `BootstrapContext`, the moving/stationary block variants, and their Gaussian-effect helpers
   provide cooperative cancellation. `BootstrapOptions.MaxResamples` bounds callback work and
   replicate storage.
-- `FitVARWithOptions`, `SelectVARLagsWithOptions`, and `VARGrangerTestWithOptions` reject
-  overflowing or oversized regression designs. The default cap is `DefaultMaxVARDesignCells`.
+- `FitVARWithOptions`, `SelectVARLagsWithOptions`, `VARGrangerTestWithOptions`, and
+  `VARGrangerScan` reject overflowing or oversized regression designs. The default cap is
+  `DefaultMaxVARDesignCells`.
+- `VARModel.Stability` bounds both companion-matrix cells and shifted-QR iterations. The default
+  cell cap admits a 64-dimensional companion matrix; larger reviewed workloads must opt in.
+- `VARGrangerScanContext` supports cooperative cancellation and rejects hypothesis families above
+  `DefaultMaxVARGrangerTests` before fitting. Cancellation or failure never returns a partial family.
 
 These are safety bounds, not statistical convergence guarantees. Increasing a budget can make a
 search more complete, but cannot repair violated causal assumptions or insufficient data.
@@ -91,7 +97,7 @@ search more complete, but cannot repair violated causal assumptions or insuffici
 | Capability | Method | Status |
 |---|---|---|
 | Granger causality | Pairwise OLS autoregressions (QR-fitted) + F-test | **Released in `v0.1.0`** — ground-truth-validated and benchmarked; flags confounders by design (see below) |
-| Multivariate temporal prediction | Reduced-form VAR, AIC/BIC/HQIC lag selection, conditional Granger F-tests, residual diagnostics, moving/stationary bootstrap | **Released in `v0.15.0`** — independently cross-checked against base R; controls observed histories, not hidden causes; predictive rather than structural |
+| Multivariate temporal prediction | Reduced-form VAR, AIC/BIC/HQIC lag selection, companion stability, Portmanteau whiteness, multiplicity-adjusted conditional Granger scans, moving/stationary bootstrap | **Released through `v0.16.0`** — independently cross-checked against base R; unit-boundary fits are explicitly indeterminate; controls observed histories, not hidden causes; predictive rather than structural |
 | Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Released in `v0.2.0`** — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
 | Directional discovery | DirectLiNGAM (deterministic, non-Gaussian noise) → causal order + weighted DAG | **Released in `v0.3.0`** — ground-truth-validated and benchmarked; identifies a fully directed model when the noise is non-Gaussian (see below) |
 | Interventions / counterfactuals | Linear SEM + do-operator (forward substitution; Pearl abduction–action–prediction) | **Released in `v0.4.0`** — exact for a fully specified linear SEM; the general do-calculus *identification* problem (latent confounders) remains research (see below) |
@@ -609,25 +615,68 @@ y_t = c + A_1 y_{t-1} + \cdots + A_p y_{t-p} + u_t,
 ```
 
 where `data[variable][time]` is aligned at a common interval. `SelectVARLags` compares orders on
-the **same response timestamps** using the Lütkepohl forms of AIC, BIC, and Hannan–Quinn;
-`ResidualAutocorrelation` exposes remaining innovation correlation rather than silently treating an
-underfit order as valid. `VARGrangerTest` removes only the proposed cause's lag coefficients from
-the effect equation while leaving every other supplied history in both models:
+the **same response timestamps** using the Lütkepohl forms of AIC, BIC, and Hannan–Quinn.
+`VARModel.Stability` computes the roots of the VAR(1) companion representation and reports one of
+three states: `stable`, `unstable`, or `indeterminate`. The indeterminate band around unit modulus
+is deliberate: numerical noise near a unit root must not become a high-confidence decision.
+
+`VARModel.WhitenessTest` implements the multivariate Portmanteau test. Its small-sample-adjusted
+statistic is
+
+```math
+Q_h^* = T^2 \sum_{\ell=1}^{h}\frac{1}{T-\ell}
+\operatorname{tr}\!\left(C_\ell^\top C_0^{-1} C_\ell C_0^{-1}\right)
+\;\overset{H_0}{\sim}\;\chi^2_{k^2(h-p)},
+```
+
+where the null is zero residual autocovariance through lag $h$. A small p-value rejects residual
+whiteness; a large value does not prove independence. `ResidualAutocorrelation` remains available
+for locating individual residual relationships.
+
+The conservative workflow validates the fitted dynamics before using any direction to raise an
+application's confidence:
 
 ```go
 selection, _ := causa.SelectVARLags(data, []string{"cpu", "latency", "traffic"}, 12)
-test, _ := causa.VARGrangerTest(data, []string{"cpu", "latency", "traffic"},
-    0, 1, selection.SelectedBIC) // CPU -> latency, conditional on traffic history
-fmt.Printf("F=%.3f p=%.4g conditioned=%v\n", test.F, test.PValue, test.ConditionedOn)
+model, _ := causa.FitVAR(data, []string{"cpu", "latency", "traffic"}, selection.SelectedBIC)
+stability, _ := model.Stability(nil)
+whiteness, _ := model.WhitenessTest(selection.SelectedBIC+10, true)
+rejectWhiteness, _ := whiteness.Reject(0.05)
+if stability.Status != causa.VARStable || rejectWhiteness {
+    // Fail closed: do not promote directions from a misspecified temporal model.
+}
+scan, _ := causa.VARGrangerScan(data, model.Nodes(), selection.SelectedBIC, nil)
+for _, finding := range scan.Findings {
+    if finding.Significant {
+        fmt.Printf("%s -> %s adjusted-p=%.4g\n",
+            finding.Test.CauseName, finding.Test.EffectName, finding.AdjustedPValue)
+    }
+}
 ```
 
-With two variables this is numerically equivalent to `GrangerTest`; with measured common drivers
-it can remove pairwise omitted-variable false positives. It cannot control a variable that was not
-measured. This is a **predictive reduced-form VAR**, not an SVAR: contemporaneous directions are
-not identified, and a significant lag test is not an intervention effect. Unit roots, cointegration,
-regime changes, nonlinear dynamics, irregular sampling, residual autocorrelation, and searching
-many pairs without multiplicity control all require additional analysis. The numeric implementation
-is locked to an independent base-R oracle in `scripts/var_oracle.R`.
+`VARGrangerTest` tests one prespecified direction. `VARGrangerScan` tests every ordered pair inside
+the same full VAR and adjusts the complete family. Its zero-value default is Holm, which controls
+family-wise error without an independence assumption. Benjamini–Hochberg is an explicit,
+less-conservative FDR option under its usual independence or positive-dependence conditions;
+`PValueNone` is available only when the caller deliberately owns multiplicity elsewhere.
+
+With two variables the conditional test is numerically equivalent to `GrangerTest`; with measured
+common drivers it can remove pairwise omitted-variable false positives. It cannot control a
+variable that was not measured. This is a **predictive reduced-form VAR**, not an SVAR:
+contemporaneous directions are not identified, and a significant lag test is not an intervention
+effect. Unit roots require a real unit-root/cointegration workflow; regime changes, nonlinear
+dynamics, irregular sampling, hidden causes, and post-selection reuse of the same data require
+additional analysis. The stability diagnostic is not a unit-root test, and Portmanteau failure to
+reject is not proof that the model is true.
+
+The numeric implementation is locked to independent base-R oracles in `scripts/var_oracle.R` and
+`scripts/var_validity_oracle.R`. Method references: Hosking, “The Multivariate Portmanteau
+Statistic,” *JASA* 75 (1980), [doi:10.1080/01621459.1980.10477520](https://doi.org/10.1080/01621459.1980.10477520);
+Holm, “A Simple Sequentially Rejective Multiple Test Procedure,” *Scandinavian Journal of
+Statistics* 6 (1979), [JSTOR 4615733](https://doi.org/10.2307/4615733); Benjamini and Hochberg,
+“Controlling the False Discovery Rate,” *JRSS B* 57 (1995),
+[doi:10.1111/j.2517-6161.1995.tb02031.x](https://doi.org/10.1111/j.2517-6161.1995.tb02031.x).
+
 
 ## Design principles
 

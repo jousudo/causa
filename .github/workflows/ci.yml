@@ -48,7 +48,9 @@ jobs:
           echo "statement coverage: ${coverage}%"
           awk -v coverage="$coverage" 'BEGIN { if (coverage + 0 < 90) { print "coverage below 90%"; exit 1 } }'
       - name: fuzz smoke
-        run: go test -run=^$ -fuzz=FuzzDenseConstructors -fuzztime=10s .
+        run: |
+          go test -run=^$ -fuzz=FuzzDenseConstructors -fuzztime=10s .
+          go test -run=^$ -fuzz=FuzzAdjustPValues -fuzztime=5s .
 
   portability:
     name: go test (${{ matrix.os }})
