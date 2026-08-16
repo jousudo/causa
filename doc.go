@@ -5,7 +5,7 @@
 // FCI, DirectLiNGAM, distribution fitting, and ordinary Bootstrap expect
 // independent observational rows unless explicitly documented otherwise.
 //
-// Status: early development — v0.15.0 released; pre-v1.0, minor versions may
+// Status: early development — v0.16.0 released; pre-v1.0, minor versions may
 // still change the API. Reliability APIs add context cancellation, work and
 // memory budgets, and diagnostics for discovery, dense evaluation, bootstrap,
 // and multivariate temporal regression.
@@ -15,10 +15,13 @@
 //     (GrangerTest). Released in v0.1.0.
 //   - Multivariate temporal prediction — reduced-form VAR fitting (FitVAR),
 //     common-sample AIC/BIC/HQIC lag selection (SelectVARLags), conditional
-//     multivariate Granger F-tests (VARGrangerTest), and residual-correlation
-//     diagnostics. Predictive rather than structural; controls supplied histories,
-//     not hidden causes. Independently cross-checked against base R. Released in
-//     v0.15.0.
+//     multivariate Granger F-tests (VARGrangerTest), companion-root stability
+//     with an indeterminate unit-circle band (VARModel.Stability), adjusted
+//     multivariate Portmanteau residual-whiteness testing (VARModel.WhitenessTest),
+//     and all-directions family adjustment (VARGrangerScan; Holm default, BH
+//     opt-in). Predictive rather than structural; controls supplied histories,
+//     not hidden causes. Independently cross-checked against base R. Released
+//     through v0.16.0.
 //   - Constraint-based causal discovery — the order-independent PC-stable
 //     algorithm returning a CPDAG (PCStable), with a pluggable
 //     conditional-independence test (CITest) whose linear-Gaussian
@@ -111,6 +114,14 @@
 //     percentile-bootstrap semantics and require an approximately stationary,
 //     weakly dependent process plus a defensible block length. VAROptions bounds
 //     temporal regression design memory. Released in v0.15.0.
+//   - Temporal validity and family-safe scanning — VAR stability is classified
+//     stable/unstable/indeterminate under companion-cell and QR-iteration
+//     budgets; the Portmanteau test detects residual serial misspecification;
+//     AdjustPValues implements Holm and Benjamini-Hochberg; and
+//     VARGrangerScanContext tests a complete ordered family with cancellation
+//     and a test-count budget, returning no partial family. Independent base-R
+//     oracles cover the roots, chi-square tail, raw tests, and adjustments.
+//     Released in v0.16.0.
 //
 // Research: identification of effects UNDER selection bias (recovering P(y | do(x))
 // when the data itself is selection-biased) — discovery now handles selection
