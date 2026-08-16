@@ -6,6 +6,43 @@ source or behavioral incompatibility explicitly.
 
 ## [Unreleased]
 
+## [v0.15.0] - 2026-08-16
+
+### Added
+
+- Reduced-form multivariate VAR fitting with intercepts, coefficient matrices,
+  innovation residuals/covariance, and defensive result accessors.
+- Common-sample AIC, BIC, and Hannan-Quinn lag-order selection plus residual
+  cross-autocorrelation diagnostics.
+- Conditional multivariate Granger F-tests that remove the proposed cause lags
+  while retaining every other supplied variable history.
+- Moving-block and Politis-Romano stationary bootstrap engines, including
+  context-aware and Gaussian-effect helpers for serially dependent observations.
+- An independent stdlib-only base-R numeric oracle covering VAR coefficients,
+  innovation covariance, information criteria, F statistics, and p-values.
+- Synthetic confounder, known-order, dependent-uncertainty, error, cancellation,
+  example, and benchmark coverage for the temporal APIs.
+
+### Changed
+
+- Package and README data-regime guidance now distinguishes i.i.d. row resampling
+  from dependence-preserving block resampling.
+- Temporal documentation explicitly separates predictive reduced-form VAR from
+  contemporaneous structural identification and intervention claims.
+
+### Reliability
+
+- VAR regression designs reject integer overflow and exceedance of
+  `DefaultMaxVARDesignCells`; reviewed callers can override the cap with
+  `VAROptions`.
+- Dependent bootstraps inherit `BootstrapOptions.MaxResamples`, deterministic
+  seeds, failed-replicate diagnostics, and cooperative cancellation.
+
+### Compatibility
+
+- This release is additive. Existing `GrangerTest`, `Bootstrap`, and Gaussian
+  effect APIs retain their behavior and i.i.d./pairwise statistical scope.
+
 ## [v0.14.0] - 2026-08-16
 
 ### Added

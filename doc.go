@@ -1,17 +1,24 @@
 // Package causa provides general-purpose causal discovery, identification, and
 // estimation in pure Go (standard library only, CGO-free). Each algorithm has
-// its own data regime: only Granger is inherently a time-series method; PC, FCI,
-// DirectLiNGAM, distribution fitting, and the current bootstrap expect
+// its own data regime: Granger and reduced-form VAR are time-series methods,
+// and the moving/stationary block bootstraps preserve serial dependence. PC,
+// FCI, DirectLiNGAM, distribution fitting, and ordinary Bootstrap expect
 // independent observational rows unless explicitly documented otherwise.
 //
-// Status: early development — v0.14.0 released; pre-v1.0, minor versions may
-// still change the API. Reliability APIs add context cancellation,
-// conditional-independence test budgets and diagnostics, and pre-allocation
-// limits for dense discrete state spaces and bootstrap replicates.
+// Status: early development — v0.15.0 released; pre-v1.0, minor versions may
+// still change the API. Reliability APIs add context cancellation, work and
+// memory budgets, and diagnostics for discovery, dense evaluation, bootstrap,
+// and multivariate temporal regression.
 //
 // Implemented:
-//   - Granger causality — pairwise VAR fitting (QR-fitted OLS) + F-test
+//   - Granger causality — pairwise autoregression (QR-fitted OLS) + F-test
 //     (GrangerTest). Released in v0.1.0.
+//   - Multivariate temporal prediction — reduced-form VAR fitting (FitVAR),
+//     common-sample AIC/BIC/HQIC lag selection (SelectVARLags), conditional
+//     multivariate Granger F-tests (VARGrangerTest), and residual-correlation
+//     diagnostics. Predictive rather than structural; controls supplied histories,
+//     not hidden causes. Independently cross-checked against base R. Released in
+//     v0.15.0.
 //   - Constraint-based causal discovery — the order-independent PC-stable
 //     algorithm returning a CPDAG (PCStable), with a pluggable
 //     conditional-independence test (CITest) whose linear-Gaussian
@@ -98,6 +105,12 @@
 //     discrete factor state spaces before allocation; BootstrapContext and
 //     BootstrapOptions.MaxResamples bound resampling work. Existing entry points
 //     delegate to the bounded implementations. Released in v0.14.0.
+//   - Dependence-preserving uncertainty — MovingBlockBootstrap samples fixed
+//     overlapping blocks and StationaryBootstrap samples geometrically distributed
+//     circular blocks, with context-aware and Gaussian-effect variants. Both keep
+//     percentile-bootstrap semantics and require an approximately stationary,
+//     weakly dependent process plus a defensible block length. VAROptions bounds
+//     temporal regression design memory. Released in v0.15.0.
 //
 // Research: identification of effects UNDER selection bias (recovering P(y | do(x))
 // when the data itself is selection-biased) — discovery now handles selection
