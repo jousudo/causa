@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
 
-# Least privilege: no job here needs write access to anything.
+# Least privilege: no job here needs write access.
 permissions:
   contents: read
 
@@ -14,12 +14,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Third-party actions are pinned by full commit SHA (tag in the comment) so a
-# moved tag can never inject unreviewed code into this pipeline.
+# Third-party actions are pinned by full commit SHA. Go tools are pinned by
+# released module version so reruns use the same analyzers.
 jobs:
   go:
-    name: go build/vet/test (-race)
+    name: go quality, race, coverage, fuzz
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -29,7 +30,9 @@ jobs:
         run: |
           out="$(gofmt -l .)"
           if [ -n "$out" ]; then
-            echo "gofmt required on:"; echo "$out"; exit 1
+            echo "gofmt required on:"
+            echo "$out"
+            exit 1
           fi
       - name: go vet
         run: go vet ./...
@@ -37,31 +40,55 @@ jobs:
         run: go build ./...
       - name: go test -race
         run: go test -race ./...
+      - name: coverage gate
+        shell: bash
+        run: |
+          go test -coverprofile=coverage.out ./...
+          coverage="$(go tool cover -func=coverage.out | awk '/total:/ {gsub("%","",$3); print $3}')"
+          echo "statement coverage: ${coverage}%"
+          awk -v coverage="$coverage" 'BEGIN { if (coverage + 0 < 90) { print "coverage below 90%"; exit 1 } }'
+      - name: fuzz smoke
+        run: go test -run=^$ -fuzz=FuzzDenseConstructors -fuzztime=10s .
 
-  staticcheck:
-    name: staticcheck
-    runs-on: ubuntu-latest
+  portability:
+    name: go test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-      # @latest on purpose: pinned staticcheck releases lag new Go toolchains,
-      # which turns a Go upgrade into a spurious CI failure.
+      - run: go test ./...
+
+  staticcheck:
+    name: staticcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
       - name: install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
       - name: staticcheck
         run: staticcheck ./...
 
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
       - name: install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
       - name: govulncheck
         run: govulncheck ./...

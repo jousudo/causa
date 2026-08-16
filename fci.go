@@ -1,6 +1,7 @@
 package causa
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -224,6 +225,12 @@ type FCIOptions struct {
 	// completeness for speed on dense graphs.
 	MaxCondSet int
 
+	// MaxTests caps the total number of conditional-independence tests across the
+	// initial skeleton and Possible-D-SEP refinement. Zero (the default) means no
+	// explicit test budget. Reaching the limit returns ErrMaxTests, never a
+	// partially refined PAG.
+	MaxTests int
+
 	// CITest is the conditional-independence test. Nil selects FisherZTest (the
 	// linear-Gaussian default). See CITest for the contract a custom test must
 	// satisfy.
@@ -253,6 +260,8 @@ type FCIOptions struct {
 // Input. Identical to PCStable: data holds one variable per outer slice, every
 // variable of length n; names, if non-nil, has one entry per variable (else
 // V0, V1, …). The default test treats the data as continuous linear-Gaussian.
+// Rows are assumed independent; raw chronological samples with serial dependence
+// require a time-series-specific method or a justified sampling design.
 //
 // Algorithm. Five phases:
 //
@@ -303,8 +312,9 @@ type FCIOptions struct {
 // sample supports cannot be tested.
 //
 // Errors: the same set as PCStable — ErrTooFewVariables, ErrUnequalLengths,
-// ErrTooFewSamples, ErrNonFinite, ErrNameCount, ErrInvalidAlpha, and any error
-// surfaced by the CITest (which aborts the run).
+// ErrTooFewSamples, ErrNonFinite, ErrNameCount, ErrInvalidAlpha, ErrMaxTests
+// from FCIContext when its shared budget is exhausted, context cancellation, and
+// any error surfaced by the CITest (which aborts the run).
 //
 // Reference: Spirtes, Glymour & Scheines, "Causation, Prediction, and Search"
 // (2nd ed., 2000), ch. 6 (FCI, Possible-D-SEP); Zhang, "On the completeness of
@@ -312,23 +322,41 @@ type FCIOptions struct {
 // and selection bias", Artificial Intelligence 172 (2008) 1873–1896 (rules
 // R1–R10); Colombo & Maathuis, JMLR 15 (2014) (order-independent skeleton).
 func FCI(data [][]float64, names []string, opts *FCIOptions) (*PAG, error) {
+	g, _, err := FCIContext(context.Background(), data, names, opts)
+	return g, err
+}
+
+// FCIContext is FCI with cancellation, a shared CI-test budget across skeleton
+// and Possible-D-SEP refinement, and auditable diagnostics. Cancellation is
+// checked before every CI test and between phases. A canceled or bounded search
+// never returns a partial PAG.
+func FCIContext(ctx context.Context, data [][]float64, names []string, opts *FCIOptions) (*PAG, *DiscoveryDiagnostics, error) {
+	maxTests := 0
+	if opts != nil && opts.MaxTests > 0 {
+		maxTests = opts.MaxTests
+	}
+	run := newDiscoveryRun(ctx, maxTests)
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
+	}
+
 	p := len(data)
 	if p < 2 {
-		return nil, ErrTooFewVariables
+		return nil, run.diag, ErrTooFewVariables
 	}
 	n := len(data[0])
 	for _, v := range data {
 		if len(v) != n {
-			return nil, ErrUnequalLengths
+			return nil, run.diag, ErrUnequalLengths
 		}
 	}
 	if n < 4 {
-		return nil, ErrTooFewSamples
+		return nil, run.diag, ErrTooFewSamples
 	}
 	for _, v := range data {
 		for _, x := range v {
 			if !isFinite(x) {
-				return nil, ErrNonFinite
+				return nil, run.diag, ErrNonFinite
 			}
 		}
 	}
@@ -340,7 +368,7 @@ func FCI(data [][]float64, names []string, opts *FCIOptions) (*PAG, error) {
 			names[i] = fmt.Sprintf("V%d", i)
 		}
 	case len(names) != p:
-		return nil, ErrNameCount
+		return nil, run.diag, ErrNameCount
 	default:
 		names = append([]string(nil), names...)
 	}
@@ -352,7 +380,7 @@ func FCI(data [][]float64, names []string, opts *FCIOptions) (*PAG, error) {
 	if opts != nil {
 		if opts.Alpha != 0 {
 			if opts.Alpha <= 0 || opts.Alpha >= 1 {
-				return nil, ErrInvalidAlpha
+				return nil, run.diag, ErrInvalidAlpha
 			}
 			alpha = opts.Alpha
 		}
@@ -366,9 +394,12 @@ func FCI(data [][]float64, names []string, opts *FCIOptions) (*PAG, error) {
 	}
 
 	// Phase 1: PC-stable skeleton (shared with PCStable).
-	adj, sepset, err := pcSkeleton(data, ci, alpha, maxCond, n, p)
+	adj, sepset, err := pcSkeleton(data, ci, alpha, maxCond, n, p, run)
 	if err != nil {
-		return nil, err
+		return nil, run.diag, err
+	}
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
 	}
 
 	// Represent the skeleton as a mark matrix, every edge o-o.
@@ -384,20 +415,32 @@ func FCI(data [][]float64, names []string, opts *FCIOptions) (*PAG, error) {
 
 	// Phase 2: orient unshielded colliders on the initial skeleton.
 	orientCollidersPAG(m, sepset, p)
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
+	}
 
 	// Phase 3: Possible-D-SEP refinement (may delete more edges + record sepsets).
-	if err := fciPDSepRefine(data, m, sepset, ci, alpha, maxCond, n, p); err != nil {
-		return nil, err
+	if err := fciPDSepRefine(data, m, sepset, ci, alpha, maxCond, n, p, run); err != nil {
+		return nil, run.diag, err
+	}
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
 	}
 
 	// Phase 4: reset to o-o and re-orient colliders with the refined information.
 	resetToCircles(m, p)
 	orientCollidersPAG(m, sepset, p)
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
+	}
 
 	// Phase 5: Zhang's orientation rules to closure.
 	applyFCIRules(m, sepset, p, selection)
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
+	}
 
-	return &PAG{names: names, mark: m}, nil
+	return &PAG{names: names, mark: m}, run.diag, nil
 }
 
 // --- endpoint-mark helpers -----------------------------------------------
@@ -470,24 +513,30 @@ func orientCollidersPAG(m [][]Mark, sepset [][][]int, p int) {
 // cannot reach). Possible-D-SEP is computed once, up front, on the post-collider
 // graph, so deletions during the phase do not change any other pair's candidate
 // set: the refinement is order-independent, matching the PC-stable skeleton.
-func fciPDSepRefine(data [][]float64, m [][]Mark, sepset [][][]int, ci CITest, alpha float64, maxCond, n, p int) error {
+func fciPDSepRefine(data [][]float64, m [][]Mark, sepset [][][]int, ci CITest, alpha float64, maxCond, n, p int, run *discoveryRun) error {
 	pds := make([][]bool, p)
 	for a := 0; a < p; a++ {
+		if err := run.check(); err != nil {
+			return err
+		}
 		pds[a] = possibleDSep(m, p, a)
 	}
 	for i := 0; i < p; i++ {
 		for j := i + 1; j < p; j++ {
+			if err := run.check(); err != nil {
+				return err
+			}
 			if !fciAdjacent(m, i, j) {
 				continue
 			}
-			removed, err := trySeparate(data, m, sepset, ci, alpha, maxCond, n, p, i, j, pds[i])
+			removed, err := trySeparate(data, m, sepset, ci, alpha, maxCond, n, p, i, j, pds[i], run)
 			if err != nil {
 				return err
 			}
 			if removed {
 				continue
 			}
-			if _, err := trySeparate(data, m, sepset, ci, alpha, maxCond, n, p, i, j, pds[j]); err != nil {
+			if _, err := trySeparate(data, m, sepset, ci, alpha, maxCond, n, p, i, j, pds[j], run); err != nil {
 				return err
 			}
 		}
@@ -552,7 +601,7 @@ func possibleDSep(m [][]Mark, p, a int) []bool {
 // the separating set on both sides, and returns removed=true. Subset sizes honour
 // the same honest small-sample cap as the skeleton (n − |S| − 3 ≥ 1) and
 // MaxCondSet.
-func trySeparate(data [][]float64, m [][]Mark, sepset [][][]int, ci CITest, alpha float64, maxCond, n, p, i, j int, pdsMask []bool) (bool, error) {
+func trySeparate(data [][]float64, m [][]Mark, sepset [][][]int, ci CITest, alpha float64, maxCond, n, p, i, j int, pdsMask []bool, run *discoveryRun) (bool, error) {
 	var cand []int
 	for v := 0; v < p; v++ {
 		if pdsMask[v] && v != i && v != j {
@@ -561,6 +610,9 @@ func trySeparate(data [][]float64, m [][]Mark, sepset [][][]int, ci CITest, alph
 	}
 	levelMax := n - 4 // n - L - 3 >= 1  =>  L <= n-4
 	if maxCond > 0 && maxCond < levelMax {
+		if len(cand) > maxCond {
+			run.diag.StoppedByMaxConditioningSet = true
+		}
 		levelMax = maxCond
 	}
 
@@ -572,7 +624,7 @@ func trySeparate(data [][]float64, m [][]Mark, sepset [][][]int, ci CITest, alph
 			for t, x := range sel {
 				s[t] = cand[x]
 			}
-			pval, err := ci(data, i, j, s)
+			pval, err := run.test(ci, discoveryPossibleDSep, data, i, j, s)
 			if err != nil {
 				outErr = err
 				return false
@@ -580,6 +632,7 @@ func trySeparate(data [][]float64, m [][]Mark, sepset [][][]int, ci CITest, alph
 			if pval > alpha {
 				m[i][j] = NoMark
 				m[j][i] = NoMark
+				run.diag.EdgesRemoved++
 				cp := append([]int(nil), s...)
 				sepset[i][j] = cp
 				sepset[j][i] = cp

@@ -1,8 +1,13 @@
-// Package causa provides causal inference and causal discovery for time
-// series in pure Go (standard library only, CGO-free).
+// Package causa provides general-purpose causal discovery, identification, and
+// estimation in pure Go (standard library only, CGO-free). Each algorithm has
+// its own data regime: only Granger is inherently a time-series method; PC, FCI,
+// DirectLiNGAM, distribution fitting, and the current bootstrap expect
+// independent observational rows unless explicitly documented otherwise.
 //
-// Status: early development — v0.13.0 released; pre-v1.0, minor versions may
-// still change the API.
+// Status: early development — v0.14.0 released; pre-v1.0, minor versions may
+// still change the API. Reliability APIs add context cancellation,
+// conditional-independence test budgets and diagnostics, and pre-allocation
+// limits for dense discrete state spaces and bootstrap replicates.
 //
 // Implemented:
 //   - Granger causality — pairwise VAR fitting (QR-fitted OLS) + F-test
@@ -88,10 +93,17 @@
 //     byte-identical to earlier versions. The IDP/CIDP identifiers, sound only under
 //     no selection, refuse a PAG carrying an — edge (ErrSelectionBiasUnsupported)
 //     rather than return a wrong estimand. Released in v0.13.0.
+//   - Bounded execution and diagnostics — PCStableContext and FCIContext add
+//     cancellation, CI-test budgets, and audit diagnostics; DenseOptions bounds
+//     discrete factor state spaces before allocation; BootstrapContext and
+//     BootstrapOptions.MaxResamples bound resampling work. Existing entry points
+//     delegate to the bounded implementations. Released in v0.14.0.
 //
 // Research: identification of effects UNDER selection bias (recovering P(y | do(x))
 // when the data itself is selection-biased) — discovery now handles selection
-// (v0.13.0), but the identification algorithms deliberately refuse it. See the
+// (v0.13.0), but the identification algorithms deliberately refuse it. A March
+// 2026 preprint proposes a complete algorithm for this setting; causa does not
+// claim it until the result is independently reproduced and tested here. See the
 // README for the honest roadmap and the assumptions each method rests on: no
 // capability is claimed before it is implemented, validated against ground-truth
 // datasets, and benchmarked.

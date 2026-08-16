@@ -15,6 +15,10 @@ var (
 	// ErrAssignment is returned by ProbAt when an assignment does not give an
 	// in-range state for exactly the distribution's variables.
 	ErrAssignment = errors.New("causa: assignment does not match the distribution's variables")
+	// ErrBadEstimand is returned when an expression is nil or has an unknown
+	// internal node kind. Expressions returned by the identification algorithms
+	// always satisfy this invariant.
+	ErrBadEstimand = errors.New("causa: invalid estimand expression")
 )
 
 // Distribution is a discrete joint distribution over a set of variables, held as
@@ -36,13 +40,20 @@ type Distribution struct {
 // product of the cardinalities. Entries must be finite and non-negative; the
 // table is NOT required to sum to one (so it can also carry an unnormalized
 // factor), but a genuine observational input normally does.
+//
+// Errors: ErrBadDistribution for invalid cardinalities, values, or length, and
+// ErrStateSpaceTooLarge for an overflowing or over-budget dense table.
 func NewDistribution(card []int, prob []float64) (*Distribution, error) {
-	total := 1
-	for _, c := range card {
-		if c < 1 {
-			return nil, ErrBadDistribution
-		}
-		total *= c
+	return NewDistributionWithOptions(card, prob, nil)
+}
+
+// NewDistributionWithOptions is NewDistribution with an explicit dense-table
+// memory budget. The default rejects tables larger than DefaultMaxDenseCells
+// before copying their probability data.
+func NewDistributionWithOptions(card []int, prob []float64, opts *DenseOptions) (*Distribution, error) {
+	total, err := checkedDenseProduct(card, denseCellLimit(opts))
+	if err != nil {
+		return nil, err
 	}
 	if len(prob) != total {
 		return nil, ErrBadDistribution
@@ -104,11 +115,19 @@ func flatIndex(vars, gcard, assign []int) int {
 }
 
 func factorSize(vars, gcard []int) int {
-	total := 1
-	for _, v := range vars {
-		total *= gcard[v]
+	size, _ := factorSizeLimited(vars, gcard, -1)
+	return size
+}
+
+func factorSizeLimited(vars, gcard []int, maxCells int) (int, error) {
+	card := make([]int, len(vars))
+	for i, v := range vars {
+		if v < 0 || v >= len(gcard) {
+			return 0, ErrBadDistribution
+		}
+		card[i] = gcard[v]
 	}
-	return total
+	return checkedDenseProduct(card, maxCells)
 }
 
 func cardsFor(vars, gcard []int) []int {
@@ -141,29 +160,42 @@ func forEachAssign(vars, gcard []int, fn func(assign []int)) {
 // factorMarginalize sums a factor out over the variables in `over`, returning a
 // factor on the remaining variables.
 func factorMarginalize(f *Distribution, over map[int]bool, gcard []int) *Distribution {
+	out, _ := factorMarginalizeLimited(f, over, gcard, -1)
+	return out
+}
+
+func factorMarginalizeLimited(f *Distribution, over map[int]bool, gcard []int, maxCells int) (*Distribution, error) {
 	var keep []int
 	for _, v := range f.vars {
 		if !over[v] {
 			keep = append(keep, v)
 		}
 	}
-	res := make([]float64, factorSize(keep, gcard))
+	size, err := factorSizeLimited(keep, gcard, maxCells)
+	if err != nil {
+		return nil, err
+	}
+	res := make([]float64, size)
 	forEachAssign(f.vars, gcard, func(assign []int) {
 		res[flatIndex(keep, gcard, assign)] += f.prob[flatIndex(f.vars, gcard, assign)]
 	})
-	return &Distribution{vars: keep, card: cardsFor(keep, gcard), prob: res}
+	return &Distribution{vars: keep, card: cardsFor(keep, gcard), prob: res}, nil
 }
 
 // factorMul multiplies two factors, broadcasting over the union of their
 // variables.
-func factorMul(a, b *Distribution, gcard []int) *Distribution {
+func factorMulLimited(a, b *Distribution, gcard []int, maxCells int) (*Distribution, error) {
 	union := sortedUnionInts(a.vars, b.vars)
-	res := make([]float64, factorSize(union, gcard))
+	size, err := factorSizeLimited(union, gcard, maxCells)
+	if err != nil {
+		return nil, err
+	}
+	res := make([]float64, size)
 	forEachAssign(union, gcard, func(assign []int) {
 		res[flatIndex(union, gcard, assign)] =
 			a.prob[flatIndex(a.vars, gcard, assign)] * b.prob[flatIndex(b.vars, gcard, assign)]
 	})
-	return &Distribution{vars: union, card: cardsFor(union, gcard), prob: res}
+	return &Distribution{vars: union, card: cardsFor(union, gcard), prob: res}, nil
 }
 
 // factorDivide divides num by den (den's variables must be a subset of num's),
@@ -281,46 +313,81 @@ func ratioExpr(num, den *Expr) *Expr {
 // identification: given P(V) it yields the numbers of P(y | do(x)).
 //
 // joint must be a full joint over 0..n-1 (its Vars is 0,1,…). Errors:
-// ErrBadDistribution if it is not.
+// ErrBadDistribution if it is not, ErrBadEstimand for a nil/invalid expression,
+// and ErrStateSpaceTooLarge for an overflowing or over-budget factor.
 func (e *Expr) Evaluate(joint *Distribution) (*Distribution, error) {
-	n := len(joint.vars)
+	return e.EvaluateWithOptions(joint, nil)
+}
+
+// EvaluateWithOptions is Evaluate with an explicit cell budget for every dense
+// input and intermediate factor. It rejects oversized state spaces before
+// allocation, including integer-overflowing cardinality products.
+func (e *Expr) EvaluateWithOptions(joint *Distribution, opts *DenseOptions) (*Distribution, error) {
+	if e == nil {
+		return nil, ErrBadEstimand
+	}
+	if joint == nil || len(joint.vars) != len(joint.card) {
+		return nil, ErrBadDistribution
+	}
 	for i, v := range joint.vars {
 		if v != i {
 			return nil, ErrBadDistribution // must be a full joint over 0..n-1
 		}
 	}
-	gcard := make([]int, n)
-	copy(gcard, joint.card)
-	return evalExpr(e, joint, gcard), nil
+	maxCells := denseCellLimit(opts)
+	total, err := checkedDenseProduct(joint.card, maxCells)
+	if err != nil {
+		return nil, err
+	}
+	if len(joint.prob) != total {
+		return nil, ErrBadDistribution
+	}
+	gcard := append([]int(nil), joint.card...)
+	return evalExpr(e, joint, gcard, maxCells)
 }
 
-func evalExpr(e *Expr, joint *Distribution, gcard []int) *Distribution {
+func evalExpr(e *Expr, joint *Distribution, gcard []int, maxCells int) (*Distribution, error) {
+	if e == nil {
+		return nil, ErrBadEstimand
+	}
 	switch e.kind {
 	case exprJoint:
-		return joint
+		return joint, nil
 	case exprMarginal:
-		child := evalExpr(e.child, joint, gcard)
+		child, err := evalExpr(e.child, joint, gcard, maxCells)
+		if err != nil {
+			return nil, err
+		}
 		over := map[int]bool{}
 		for _, v := range e.over {
 			over[v] = true
 		}
-		return factorMarginalize(child, over, gcard)
+		return factorMarginalizeLimited(child, over, gcard, maxCells)
 	case exprProduct:
 		var acc *Distribution
 		for _, f := range e.factors {
-			t := evalExpr(f, joint, gcard)
+			t, err := evalExpr(f, joint, gcard, maxCells)
+			if err != nil {
+				return nil, err
+			}
 			if acc == nil {
 				acc = t
 			} else {
-				acc = factorMul(acc, t, gcard)
+				acc, err = factorMulLimited(acc, t, gcard, maxCells)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 		if acc == nil { // empty product = scalar 1 over no variables
-			return &Distribution{vars: nil, card: nil, prob: []float64{1}}
+			return &Distribution{vars: nil, card: nil, prob: []float64{1}}, nil
 		}
-		return acc
+		return acc, nil
 	case exprConditional:
-		b := evalExpr(e.base, joint, gcard)
+		b, err := evalExpr(e.base, joint, gcard, maxCells)
+		if err != nil {
+			return nil, err
+		}
 		hg := map[int]bool{}
 		for _, v := range e.head {
 			hg[v] = true
@@ -343,13 +410,27 @@ func evalExpr(e *Expr, joint *Distribution, gcard []int) *Distribution {
 				denOver[v] = true
 			}
 		}
-		num := factorMarginalize(b, numOver, gcard)
-		den := factorMarginalize(b, denOver, gcard)
-		return factorDivide(num, den, gcard)
+		num, err := factorMarginalizeLimited(b, numOver, gcard, maxCells)
+		if err != nil {
+			return nil, err
+		}
+		den, err := factorMarginalizeLimited(b, denOver, gcard, maxCells)
+		if err != nil {
+			return nil, err
+		}
+		return factorDivide(num, den, gcard), nil
 	case exprRatio:
-		return factorDivide(evalExpr(e.num, joint, gcard), evalExpr(e.den, joint, gcard), gcard)
+		num, err := evalExpr(e.num, joint, gcard, maxCells)
+		if err != nil {
+			return nil, err
+		}
+		den, err := evalExpr(e.den, joint, gcard, maxCells)
+		if err != nil {
+			return nil, err
+		}
+		return factorDivide(num, den, gcard), nil
 	}
-	return nil
+	return nil, ErrBadEstimand
 }
 
 // --- rendering -----------------------------------------------------------
