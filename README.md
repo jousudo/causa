@@ -5,7 +5,7 @@
 
 Causal discovery, identification, and estimation for Go. Pure standard library. Zero dependencies.
 
-> **Status: early development — `v0.14.0` released.** Granger causality shipped in `v0.1.0`,
+> **Status: early development — `v0.15.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
 > `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
 > FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, the Shpitser–Pearl ID
@@ -16,8 +16,9 @@ Causal discovery, identification, and estimation for Go. Pure standard library. 
 > evaluation of the PAG estimand in `v0.10.0`, continuous (linear-Gaussian)
 > estimand evaluation in `v0.11.0`, bootstrap uncertainty quantification of the
 > evaluated effect in `v0.12.0`, and opt-in selection-bias discovery (FCI rules
-> R5–R7) in `v0.13.0`, and bounded discovery, bootstrap, and dense-state
-> execution in `v0.14.0`.
+> R5–R7) in `v0.13.0`, bounded discovery, bootstrap, and dense-state
+> execution in `v0.14.0`, and multivariate VAR/conditional Granger plus
+> dependence-preserving bootstrap in `v0.15.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
@@ -25,11 +26,12 @@ Causal discovery, identification, and estimation for Go. Pure standard library. 
 ## What
 
 `causa` is a general-purpose causal discovery, identification, and estimation library written
-in pure Go (stdlib only, CGO-free). Its algorithms cover different data regimes: Granger is a
-time-series method, while PC, FCI, DirectLiNGAM, Gaussian fitting, and the row bootstrap expect
-independent observational rows unless explicitly documented otherwise. The library is being
-built to power deterministic root-cause analysis in AIOpsFlow, but it has no dependency on or
-domain types from any host application.
+in pure Go (stdlib only, CGO-free). Its algorithms cover different data regimes: pairwise
+Granger, reduced-form VAR, and conditional Granger are time-series methods; moving-block and
+stationary bootstrap preserve serial dependence. PC, FCI, DirectLiNGAM, Gaussian fitting, and
+the i.i.d. row bootstrap expect independent observational rows unless explicitly documented
+otherwise. The library is being built to power deterministic root-cause analysis in AIOpsFlow,
+but it has no dependency on or domain types from any host application.
 
 ## Why
 
@@ -51,15 +53,18 @@ The algorithms are composable, but their sampling assumptions are not interchang
 
 | API family | Expected input | Load-bearing assumptions |
 |---|---|---|
-| `GrangerTest` | Aligned chronological series | Appropriate lag order and approximately stationary residual process |
+| `GrangerTest` | Two aligned chronological series | Appropriate lag order and approximately stationary innovation process |
+| `FitVAR`, `SelectVARLags`, `VARGrangerTest` | Aligned multivariate chronological series | Linear reduced-form VAR, covariance stationarity, adequate lags, innovation residuals |
+| `MovingBlockBootstrap`, `StationaryBootstrap` | Ordered observations from one approximately stationary process | Weak dependence and a scientifically defensible block length |
 | `PCStable`, `FCI` | Variables observed over independent rows | Valid conditional-independence test, faithfulness; PC also requires causal sufficiency |
 | `DirectLiNGAM` | Independent observational rows | Linear acyclic model, causal sufficiency, mutually independent non-Gaussian noise |
 | `Identify`, `IdentifyConditional`, IDP/CIDP | A supplied causal graph or PAG | The graph and identification scope are valid; these APIs do not infer temporal structure |
-| `SampleGaussian`, `SampleDistribution`, `Bootstrap` | Independent rows | The current bootstrap is percentile/i.i.d.; it does not preserve serial dependence |
+| `SampleGaussian`, `SampleDistribution`, `Bootstrap` | Independent rows | Distribution fitting and the ordinary percentile bootstrap treat rows as i.i.d. |
 
 Raw chronological telemetry must not be passed to PC, FCI, DirectLiNGAM, or the i.i.d. bootstrap
 as if adjacent timestamps were independent. Detrending alone does not establish independence.
-Time-series-specific discovery and block resampling remain roadmap work.
+For temporal uncertainty use a block bootstrap; for linear predictive dynamics use VAR/Granger.
+Neither choice repairs nonstationarity or turns predictive precedence into an intervention claim.
 
 ## Bounded execution and memory safety
 
@@ -72,8 +77,11 @@ workloads can additionally bound the expensive paths:
 - `NewDistributionWithOptions`, `SampleDistributionWithOptions`, and
   `Expr.EvaluateWithOptions` reject integer-overflowing or oversized dense state spaces before
   allocation. The default maximum is `DefaultMaxDenseCells`; reviewed callers may override it.
-- `BootstrapContext` and `Expr.BootstrapGaussianEffectContext` provide cooperative
-  cancellation. `BootstrapOptions.MaxResamples` bounds callback work and replicate storage.
+- `BootstrapContext`, the moving/stationary block variants, and their Gaussian-effect helpers
+  provide cooperative cancellation. `BootstrapOptions.MaxResamples` bounds callback work and
+  replicate storage.
+- `FitVARWithOptions`, `SelectVARLagsWithOptions`, and `VARGrangerTestWithOptions` reject
+  overflowing or oversized regression designs. The default cap is `DefaultMaxVARDesignCells`.
 
 These are safety bounds, not statistical convergence guarantees. Increasing a budget can make a
 search more complete, but cannot repair violated causal assumptions or insufficient data.
@@ -83,6 +91,7 @@ search more complete, but cannot repair violated causal assumptions or insuffici
 | Capability | Method | Status |
 |---|---|---|
 | Granger causality | Pairwise OLS autoregressions (QR-fitted) + F-test | **Released in `v0.1.0`** — ground-truth-validated and benchmarked; flags confounders by design (see below) |
+| Multivariate temporal prediction | Reduced-form VAR, AIC/BIC/HQIC lag selection, conditional Granger F-tests, residual diagnostics, moving/stationary bootstrap | **Released in `v0.15.0`** — independently cross-checked against base R; controls observed histories, not hidden causes; predictive rather than structural |
 | Constraint-based discovery | PC-stable algorithm (conditional-independence tests) → CPDAG | **Released in `v0.2.0`** — ground-truth-validated and benchmarked; recovers a Markov equivalence class, not a unique DAG (see below) |
 | Directional discovery | DirectLiNGAM (deterministic, non-Gaussian noise) → causal order + weighted DAG | **Released in `v0.3.0`** — ground-truth-validated and benchmarked; identifies a fully directed model when the noise is non-Gaussian (see below) |
 | Interventions / counterfactuals | Linear SEM + do-operator (forward substitution; Pearl abduction–action–prediction) | **Released in `v0.4.0`** — exact for a fully specified linear SEM; the general do-calculus *identification* problem (latent confounders) remains research (see below) |
@@ -553,9 +562,17 @@ error come back in a `BootstrapResult`.
 **Validation.** A confidence interval is judged by its **coverage**: on a known linear-Gaussian SCM
 with a known true effect, we draw many fresh samples, build a 95% interval from each, and count how
 often it contains the truth — it lands near 95% (≈0.93 here, honestly slightly conservative for the
-percentile method), across back-door and latent-confounded front-door effects. **Scope.** This is the
-basic percentile bootstrap — no bias-correction/acceleration (BCa) — under an i.i.d.-rows assumption;
-it quantifies sampling variability, not model misspecification.
+percentile method), across back-door and latent-confounded front-door effects. **Scope.** The ordinary
+`Bootstrap` is the basic percentile bootstrap — no bias-correction/acceleration (BCa) — under an
+i.i.d.-rows assumption; it quantifies sampling variability, not model misspecification.
+
+For ordered observations, `MovingBlockBootstrap` samples overlapping fixed-length contiguous
+blocks, while `StationaryBootstrap` uses Politis–Romano geometrically distributed circular blocks.
+Both expose context-aware variants and Gaussian-effect helpers. They retain serial dependence
+inside resampled runs, but still require an approximately stationary, weakly dependent process;
+block length is an explicit modeling choice, never guessed silently. The implementations follow
+[Künsch (1989)](https://doi.org/10.1214/aos/1176347265) and
+[Politis–Romano (1994)](https://doi.org/10.1080/01621459.1994.10476870).
 
 ### Granger causality
 
@@ -579,10 +596,38 @@ F = \frac{(\mathrm{RSS}_r - \mathrm{RSS}_u)/p}{\mathrm{RSS}_u/(n - 2p - 1)}
 with the p-value evaluated through the regularized incomplete beta function (continued-fraction
 form). "x Granger-causes y" is the rejection of $H_0$ — x's past improves the prediction of y
 beyond y's own past. **Known limitation — confounding:** if a hidden common cause drives
-both series, Granger reports causality even when no direct edge exists. This is inherent to the
-method, not a defect, and it is exactly why the PC algorithm and LiNGAM are on the roadmap; the
-behavior is pinned by a dedicated test (`TestGrangerFlagsConfounder`) and documented on the
-function so it is never mistaken for a true causal claim.
+both series, pairwise Granger can report causality even when no direct edge exists. This is
+inherent to the method, not a defect; the behavior is pinned by
+`TestGrangerFlagsConfounder` and documented on the function.
+
+### Multivariate VAR and conditional Granger
+
+`FitVAR(data, names, lags)` estimates the reduced-form system
+
+```math
+y_t = c + A_1 y_{t-1} + \cdots + A_p y_{t-p} + u_t,
+```
+
+where `data[variable][time]` is aligned at a common interval. `SelectVARLags` compares orders on
+the **same response timestamps** using the Lütkepohl forms of AIC, BIC, and Hannan–Quinn;
+`ResidualAutocorrelation` exposes remaining innovation correlation rather than silently treating an
+underfit order as valid. `VARGrangerTest` removes only the proposed cause's lag coefficients from
+the effect equation while leaving every other supplied history in both models:
+
+```go
+selection, _ := causa.SelectVARLags(data, []string{"cpu", "latency", "traffic"}, 12)
+test, _ := causa.VARGrangerTest(data, []string{"cpu", "latency", "traffic"},
+    0, 1, selection.SelectedBIC) // CPU -> latency, conditional on traffic history
+fmt.Printf("F=%.3f p=%.4g conditioned=%v\n", test.F, test.PValue, test.ConditionedOn)
+```
+
+With two variables this is numerically equivalent to `GrangerTest`; with measured common drivers
+it can remove pairwise omitted-variable false positives. It cannot control a variable that was not
+measured. This is a **predictive reduced-form VAR**, not an SVAR: contemporaneous directions are
+not identified, and a significant lag test is not an intervention effect. Unit roots, cointegration,
+regime changes, nonlinear dynamics, irregular sampling, residual autocorrelation, and searching
+many pairs without multiplicity control all require additional analysis. The numeric implementation
+is locked to an independent base-R oracle in `scripts/var_oracle.R`.
 
 ## Design principles
 
