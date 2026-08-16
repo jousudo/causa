@@ -1,8 +1,11 @@
 # causa
 
-Causal inference for Go. Pure standard library. Zero dependencies.
+[![Go Reference](https://pkg.go.dev/badge/github.com/jousudo/causa.svg)](https://pkg.go.dev/github.com/jousudo/causa)
+[![CI](https://github.com/jousudo/causa/actions/workflows/ci.yml/badge.svg)](https://github.com/jousudo/causa/actions/workflows/ci.yml)
 
-> **Status: early development — `v0.13.0` released.** Granger causality shipped in `v0.1.0`,
+Causal discovery, identification, and estimation for Go. Pure standard library. Zero dependencies.
+
+> **Status: early development — `v0.14.0` released.** Granger causality shipped in `v0.1.0`,
 > PC-stable constraint-based discovery in `v0.2.0`, DirectLiNGAM directional discovery in
 > `v0.3.0`, linear-SEM interventions + counterfactuals (the do-operator) in `v0.4.0`,
 > FCI latent-confounder discovery (returning a PAG) in `v0.5.0`, the Shpitser–Pearl ID
@@ -13,18 +16,20 @@ Causal inference for Go. Pure standard library. Zero dependencies.
 > evaluation of the PAG estimand in `v0.10.0`, continuous (linear-Gaussian)
 > estimand evaluation in `v0.11.0`, bootstrap uncertainty quantification of the
 > evaluated effect in `v0.12.0`, and opt-in selection-bias discovery (FCI rules
-> R5–R7) in `v0.13.0`.
+> R5–R7) in `v0.13.0`, and bounded discovery, bootstrap, and dense-state
+> execution in `v0.14.0`.
 > Pre-1.0, minor versions may break the API. Nothing
 > below is claimed as shipped until it is implemented, tested against ground-truth datasets, and
 > benchmarked. This README is kept honest by policy: capabilities are labeled exactly as they are.
 
 ## What
 
-`causa` is a causal inference and causal discovery library for time series, written in pure
-Go (stdlib only, CGO-free). It is being built to power deterministic root-cause analysis in
-AIOpsFlow — an AIOps platform by the same author, currently in private development ahead of
-its own open-source release — but `causa` is designed as a general-purpose, standalone
-library with no ties to any host application.
+`causa` is a general-purpose causal discovery, identification, and estimation library written
+in pure Go (stdlib only, CGO-free). Its algorithms cover different data regimes: Granger is a
+time-series method, while PC, FCI, DirectLiNGAM, Gaussian fitting, and the row bootstrap expect
+independent observational rows unless explicitly documented otherwise. The library is being
+built to power deterministic root-cause analysis in AIOpsFlow, but it has no dependency on or
+domain types from any host application.
 
 ## Why
 
@@ -39,6 +44,39 @@ Tigramite). A Go service that needs causal reasoning must ship a Python sidecar 
 scientific stack — hundreds of megabytes of runtime and a supply chain to audit. `causa`
 exists to remove that hop: causal inference as a plain Go import, small enough to embed
 anywhere Go runs.
+
+## Data regimes and assumptions
+
+The algorithms are composable, but their sampling assumptions are not interchangeable:
+
+| API family | Expected input | Load-bearing assumptions |
+|---|---|---|
+| `GrangerTest` | Aligned chronological series | Appropriate lag order and approximately stationary residual process |
+| `PCStable`, `FCI` | Variables observed over independent rows | Valid conditional-independence test, faithfulness; PC also requires causal sufficiency |
+| `DirectLiNGAM` | Independent observational rows | Linear acyclic model, causal sufficiency, mutually independent non-Gaussian noise |
+| `Identify`, `IdentifyConditional`, IDP/CIDP | A supplied causal graph or PAG | The graph and identification scope are valid; these APIs do not infer temporal structure |
+| `SampleGaussian`, `SampleDistribution`, `Bootstrap` | Independent rows | The current bootstrap is percentile/i.i.d.; it does not preserve serial dependence |
+
+Raw chronological telemetry must not be passed to PC, FCI, DirectLiNGAM, or the i.i.d. bootstrap
+as if adjacent timestamps were independent. Detrending alone does not establish independence.
+Time-series-specific discovery and block resampling remain roadmap work.
+
+## Bounded execution and memory safety
+
+The zero-value APIs remain usable. Callers handling untrusted dimensions or latency-sensitive
+workloads can additionally bound the expensive paths:
+
+- `PCStableContext` and `FCIContext` accept cancellation, expose
+  `DiscoveryDiagnostics`, and honor `MaxTests`. A canceled or exhausted run returns no
+  partial graph.
+- `NewDistributionWithOptions`, `SampleDistributionWithOptions`, and
+  `Expr.EvaluateWithOptions` reject integer-overflowing or oversized dense state spaces before
+  allocation. The default maximum is `DefaultMaxDenseCells`; reviewed callers may override it.
+- `BootstrapContext` and `Expr.BootstrapGaussianEffectContext` provide cooperative
+  cancellation. `BootstrapOptions.MaxResamples` bounds callback work and replicate storage.
+
+These are safety bounds, not statistical convergence guarantees. Increasing a budget can make a
+search more complete, but cannot repair violated causal assumptions or insufficient data.
 
 ## Roadmap
 
@@ -57,13 +95,13 @@ anywhere Go runs.
 | Continuous (linear-Gaussian) evaluation | Canonical-form Gaussian factor algebra over the identified estimand (`Expr.EvaluateGaussian`) | **Released in `v0.11.0`** — evaluates an identified estimand on a *normal* observational joint, returning `P(y \| do(x))` as a Gaussian; exact for a linear-Gaussian model; validated against the closed-form structural effect (`SEM.TotalEffect`) on random latent SCMs |
 | Uncertainty quantification | Nonparametric bootstrap over the evaluated effect (`Bootstrap`, `Expr.BootstrapGaussianEffect`) + distribution fitting (`SampleGaussian`, `SampleDistribution`) | **Released in `v0.12.0`** — resamples the data to turn a point-estimated causal effect into a confidence interval; validated by its *coverage* on known linear-Gaussian SCMs (a nominal 95% interval covers the truth ≈95% of the time) |
 | Selection-bias discovery | Zhang's rules R5–R7 in FCI (opt-in `FCIOptions.SelectionBias`) → PAG with undirected (`—`) edges | **Released in `v0.13.0`** — admits selection bias into discovery, sound and complete for the class that also permits selection (Zhang 2008); off by default (PAG byte-identical to earlier versions) |
-| Identification *under* selection bias | Recovering `P(y \| do(x))` from a selection-biased PAG (IDP/CIDP) | Research — genuinely unpublished for the PAG/IDP setting; for now the identifiers **refuse** a PAG with an `—` edge (`ErrSelectionBiasUnsupported`) rather than return a wrong estimand |
+| Identification *under* selection bias | Recovering `P(y \| do(x))` from a selection-biased PAG (IDP/CIDP) | Research — a [March 2026 preprint](https://arxiv.org/abs/2603.26301) proposes complete identification from ancestral graphs under selection bias; it has not yet been independently reproduced here. The identifiers still **refuse** a PAG with an `—` edge (`ErrSelectionBiasUnsupported`) rather than return an unvalidated estimand |
 
 Granger tells you that series *A* helps predict series *B* — necessary but not sufficient for
-causation (confounders fool it). The PC algorithm and LiNGAM are what upgrade "predictive
-precedence" into defensible causal structure: PC recovers a Markov equivalence class, and
-DirectLiNGAM — where the non-Gaussian-noise assumption holds — pins down the full direction that
-PC must leave reversible.
+causation (confounders fool it). PC and LiNGAM answer different structural questions under
+stronger i.i.d./SCM assumptions; they are not an automatic upgrade to run directly on raw time
+series. PC recovers a Markov equivalence class, while DirectLiNGAM can identify a full direction
+only when its linear, causally sufficient, non-Gaussian-noise model is credible.
 
 ### Constraint-based discovery (PC-stable)
 
@@ -75,7 +113,9 @@ test (`FisherZTest`) is the linear-Gaussian partial correlation — computed by 
 that reuses the same Householder solver as the Granger path — transformed by Fisher's *z*; the
 `CITest` extension point lets you supply another test for non-Gaussian or discrete data.
 
-The test of conditional independence $x_i \perp x_j \mid S$: residualize both variables on
+The rows supplied to PC must be treated as independent observations; serially autocorrelated
+samples invalidate the default Fisher-z calibration. The test of conditional independence
+$x_i \perp x_j \mid S$: residualize both variables on
 $[1, S]$, correlate the residuals, and refer the variance-stabilized statistic to the standard
 normal,
 
@@ -169,12 +209,12 @@ and complete (Zhang 2008) for the larger class that permits selection.
 
 Note the downstream identifiers **do not** yet handle selection: `IdentifyPAG` / `IdentifyConditionalPAG`
 refuse a PAG carrying an `—` edge with `ErrSelectionBiasUnsupported` rather than return a silently
-wrong estimand (identification *under* selection bias is a separate, unpublished-for-this-setting
-problem — see the roadmap).
+wrong estimand (identification *under* selection bias is separate research; a March 2026 preprint now proposes
+an algorithm, but it has not yet been independently reproduced here — see the roadmap).
 
 **Assumptions** (stated because, as everywhere here, violating them silently returns a plausible
-but wrong graph): *faithfulness*, a correct CI test (the default `FisherZTest` assumes
-linear-Gaussian data), and — unless `SelectionBias` is set — no selection bias. Causal sufficiency
+but wrong graph): independent observational rows, *faithfulness*, a correct CI test (the default
+`FisherZTest` assumes linear-Gaussian data), and — unless `SelectionBias` is set — no selection bias. Causal sufficiency
 is **not** required — that is the entire point. The honest small-sample cap carries over from PC:
 conditioning sets stop growing once `n − |S| − 3 < 1`.
 

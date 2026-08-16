@@ -1,6 +1,7 @@
 package causa
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -45,6 +46,11 @@ type PCOptions struct {
 	// conditioning set until no adjacency set is large enough or the sample guard
 	// stops it. A positive value trades completeness for speed on dense graphs.
 	MaxCondSet int
+
+	// MaxTests caps the total number of conditional-independence tests. Zero (the
+	// default) means no explicit test budget. Reaching a positive limit aborts the
+	// run with ErrMaxTests instead of returning a partial graph.
+	MaxTests int
 
 	// CITest is the conditional-independence test used to thin the skeleton. Nil
 	// selects FisherZTest (the linear-Gaussian default). See CITest for the
@@ -146,7 +152,9 @@ func (g *CPDAG) String() string {
 // sample); every variable must have the same length n. names, if non-nil, must
 // have one entry per variable; when nil, the variables are named V0, V1, … The
 // data is treated as continuous linear-Gaussian observations by the default test
-// (see PCOptions.CITest to override).
+// (see PCOptions.CITest to override). Rows are assumed independent; raw
+// chronological samples with serial dependence require a time-series-specific
+// method or a justified preprocessing and sampling design.
 //
 // Algorithm. Three phases:
 //
@@ -196,8 +204,9 @@ func (g *CPDAG) String() string {
 //
 // Errors: ErrTooFewVariables (< 2 variables), ErrUnequalLengths (ragged data),
 // ErrTooFewSamples (n < 4), ErrNonFinite (NaN/Inf in the data), ErrNameCount
-// (names length mismatch), ErrInvalidAlpha (Alpha out of range), and any error
-// surfaced by the CITest — for the default, ErrSingular from a rank-deficient
+// (names length mismatch), ErrInvalidAlpha (Alpha out of range), ErrMaxTests
+// from PCStableContext when its budget is exhausted, context cancellation, and
+// any error surfaced by the CITest — for the default, ErrSingular from a rank-deficient
 // residualization aborts the run rather than being silently ignored.
 //
 // Reference: Colombo & Maathuis, "Order-Independent Constraint-Based Causal
@@ -205,23 +214,41 @@ func (g *CPDAG) String() string {
 // "Causal Inference and Causal Explanation with Background Knowledge", UAI 1995
 // (orientation rules R1–R4).
 func PCStable(data [][]float64, names []string, opts *PCOptions) (*CPDAG, error) {
+	g, _, err := PCStableContext(context.Background(), data, names, opts)
+	return g, err
+}
+
+// PCStableContext is PCStable with cancellation, a conditional-independence test
+// budget, and auditable diagnostics. Cancellation is checked before every CI
+// test and between discovery phases. The diagnostics are non-nil on both success
+// and failure. A canceled or bounded search never returns a partial graph.
+func PCStableContext(ctx context.Context, data [][]float64, names []string, opts *PCOptions) (*CPDAG, *DiscoveryDiagnostics, error) {
+	maxTests := 0
+	if opts != nil && opts.MaxTests > 0 {
+		maxTests = opts.MaxTests
+	}
+	run := newDiscoveryRun(ctx, maxTests)
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
+	}
+
 	p := len(data)
 	if p < 2 {
-		return nil, ErrTooFewVariables
+		return nil, run.diag, ErrTooFewVariables
 	}
 	n := len(data[0])
 	for _, v := range data {
 		if len(v) != n {
-			return nil, ErrUnequalLengths
+			return nil, run.diag, ErrUnequalLengths
 		}
 	}
 	if n < 4 {
-		return nil, ErrTooFewSamples
+		return nil, run.diag, ErrTooFewSamples
 	}
 	for _, v := range data {
 		for _, x := range v {
 			if !isFinite(x) {
-				return nil, ErrNonFinite
+				return nil, run.diag, ErrNonFinite
 			}
 		}
 	}
@@ -233,7 +260,7 @@ func PCStable(data [][]float64, names []string, opts *PCOptions) (*CPDAG, error)
 			names[i] = fmt.Sprintf("V%d", i)
 		}
 	case len(names) != p:
-		return nil, ErrNameCount
+		return nil, run.diag, ErrNameCount
 	default:
 		names = append([]string(nil), names...)
 	}
@@ -244,7 +271,7 @@ func PCStable(data [][]float64, names []string, opts *PCOptions) (*CPDAG, error)
 	if opts != nil {
 		if opts.Alpha != 0 {
 			if opts.Alpha <= 0 || opts.Alpha >= 1 {
-				return nil, ErrInvalidAlpha
+				return nil, run.diag, ErrInvalidAlpha
 			}
 			alpha = opts.Alpha
 		}
@@ -256,20 +283,29 @@ func PCStable(data [][]float64, names []string, opts *PCOptions) (*CPDAG, error)
 		}
 	}
 
-	adj, sepset, err := pcSkeleton(data, ci, alpha, maxCond, n, p)
+	adj, sepset, err := pcSkeleton(data, ci, alpha, maxCond, n, p, run)
 	if err != nil {
-		return nil, err
+		return nil, run.diag, err
+	}
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
 	}
 	orientVStructures(adj, sepset, p)
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
+	}
 	applyMeekRules(adj, p)
+	if err := run.check(); err != nil {
+		return nil, run.diag, err
+	}
 
-	return &CPDAG{names: names, adj: adj}, nil
+	return &CPDAG{names: names, adj: adj}, run.diag, nil
 }
 
 // pcSkeleton estimates the undirected skeleton with the order-independent
 // PC-stable rule and returns the adjacency matrix plus the recorded separating
 // sets. A CITest error aborts the search and is returned to the caller.
-func pcSkeleton(data [][]float64, ci CITest, alpha float64, maxCond, n, p int) ([][]bool, [][][]int, error) {
+func pcSkeleton(data [][]float64, ci CITest, alpha float64, maxCond, n, p int, run *discoveryRun) ([][]bool, [][][]int, error) {
 	adj := make([][]bool, p)
 	for i := range adj {
 		adj[i] = make([]bool, p)
@@ -283,10 +319,15 @@ func pcSkeleton(data [][]float64, ci CITest, alpha float64, maxCond, n, p int) (
 	}
 
 	for level := 0; ; level++ {
+		if err := run.check(); err != nil {
+			return nil, nil, err
+		}
 		if n-level-3 < 1 { // sample guard: no residual df for the transform
+			run.diag.StoppedBySampleSize = true
 			break
 		}
 		if maxCond > 0 && level > maxCond {
+			run.diag.StoppedByMaxConditioningSet = true
 			break
 		}
 
@@ -327,7 +368,7 @@ func pcSkeleton(data [][]float64, ci CITest, alpha float64, maxCond, n, p int) (
 					for t, x := range sel {
 						s[t] = cand[x]
 					}
-					pval, err := ci(data, i, j, s)
+					pval, err := run.test(ci, discoverySkeleton, data, i, j, s)
 					if err != nil {
 						ciErr = err
 						return false
@@ -335,6 +376,7 @@ func pcSkeleton(data [][]float64, ci CITest, alpha float64, maxCond, n, p int) (
 					if pval > alpha {
 						adj[i][j] = false
 						adj[j][i] = false
+						run.diag.EdgesRemoved++
 						cp := append([]int(nil), s...)
 						sepset[i][j] = cp
 						sepset[j][i] = cp

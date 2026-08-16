@@ -1,6 +1,7 @@
 package causa
 
 import (
+	"context"
 	"errors"
 	"math"
 	"math/rand"
@@ -11,7 +12,17 @@ import (
 // interval: an invalid confidence level, or so many resamples degenerated (the
 // statistic errored — e.g. a collinear resample with no positive-definite sample
 // covariance) that fewer than half, or fewer than two, succeeded.
-var ErrBootstrap = errors.New("causa: bootstrap failed (bad level or too many degenerate resamples)")
+var (
+	// ErrBootstrap reports an invalid level or too many degenerate resamples.
+	ErrBootstrap = errors.New("causa: bootstrap failed (bad level or too many degenerate resamples)")
+	// ErrBootstrapBudget is returned before allocation when Resamples exceeds the
+	// configured safety budget.
+	ErrBootstrapBudget = errors.New("causa: bootstrap resample budget exceeded")
+)
+
+// DefaultMaxBootstrapResamples bounds replicate storage and callback work unless
+// a caller supplies an explicit BootstrapOptions.MaxResamples override.
+const DefaultMaxBootstrapResamples = 1_000_000
 
 // --- fitting a distribution to data ---------------------------------------
 
@@ -78,8 +89,15 @@ func SampleGaussian(data [][]float64) (*GaussianDistribution, error) {
 // the same length n ≥ 1. It is the discrete counterpart of SampleGaussian.
 //
 // Errors: ErrBadDistribution (no variables, card mismatch, empty sample, or a value
-// out of range), ErrUnequalLengths.
+// out of range), ErrUnequalLengths, or ErrStateSpaceTooLarge.
 func SampleDistribution(data [][]int, card []int) (*Distribution, error) {
+	return SampleDistributionWithOptions(data, card, nil)
+}
+
+// SampleDistributionWithOptions is SampleDistribution with an explicit maximum
+// number of dense cells. Oversized or integer-overflowing state spaces are
+// rejected before the probability table is allocated.
+func SampleDistributionWithOptions(data [][]int, card []int, opts *DenseOptions) (*Distribution, error) {
 	p := len(data)
 	if p == 0 || p != len(card) {
 		return nil, ErrBadDistribution
@@ -88,12 +106,9 @@ func SampleDistribution(data [][]int, card []int) (*Distribution, error) {
 	if n == 0 {
 		return nil, ErrBadDistribution
 	}
-	total := 1
-	for _, c := range card {
-		if c < 1 {
-			return nil, ErrBadDistribution
-		}
-		total *= c
+	total, err := checkedDenseProduct(card, denseCellLimit(opts))
+	if err != nil {
+		return nil, err
 	}
 	for v := 0; v < p; v++ {
 		if len(data[v]) != n {
@@ -114,7 +129,15 @@ func SampleDistribution(data [][]int, card []int) (*Distribution, error) {
 		}
 		prob[idx] += inc
 	}
-	return NewDistribution(card, prob)
+	vars := make([]int, p)
+	for i := range vars {
+		vars[i] = i
+	}
+	return &Distribution{
+		vars: vars,
+		card: append([]int(nil), card...),
+		prob: prob,
+	}, nil
 }
 
 // --- the bootstrap engine -------------------------------------------------
@@ -131,6 +154,9 @@ type BootstrapOptions struct {
 	Level float64
 	// Seed seeds the resampling RNG, so a run is fully reproducible.
 	Seed int64
+	// MaxResamples is a safety budget for Resamples. Zero selects
+	// DefaultMaxBootstrapResamples; a negative value removes the configured cap.
+	MaxResamples int
 }
 
 // BootstrapResult is a percentile bootstrap confidence interval for a scalar
@@ -148,6 +174,9 @@ type BootstrapResult struct {
 	// Replicates are the successful resample statistics, ascending. Callers wanting
 	// a different summary (a custom percentile, a histogram) can read them directly.
 	Replicates []float64
+	// Attempted and Failed make skipped degenerate replicates auditable.
+	Attempted int
+	Failed    int
 }
 
 // Bootstrap runs a nonparametric row-resampling bootstrap of a scalar statistic
@@ -167,15 +196,39 @@ type BootstrapResult struct {
 // Scope: this is the basic percentile method — no bias-correction or acceleration
 // (BCa). It is honest about sampling variability under the model that the data are
 // i.i.d. rows; it does not correct for a skewed or biased bootstrap distribution.
-// Errors: ErrTooFewSamples (n < 1), ErrBootstrap (bad Level or too many failures),
-// or stat's own error on the original sample.
+// Errors: ErrTooFewSamples (n < 1), ErrBootstrap (nil statistic, non-finite
+// point estimate, bad Level, or too many failures), ErrBootstrapBudget, context
+// cancellation, or stat's own error on the original sample.
 func Bootstrap(n int, stat func(idx []int) (float64, error), opts BootstrapOptions) (*BootstrapResult, error) {
+	return BootstrapContext(context.Background(), n, stat, opts)
+}
+
+// BootstrapContext is Bootstrap with cooperative cancellation between statistic
+// calls. A callback already in progress is allowed to finish; cancellation is
+// checked before the point estimate and every replicate.
+func BootstrapContext(ctx context.Context, n int, stat func(idx []int) (float64, error), opts BootstrapOptions) (*BootstrapResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if n < 1 {
 		return nil, ErrTooFewSamples
+	}
+	if stat == nil {
+		return nil, ErrBootstrap
 	}
 	b := opts.Resamples
 	if b <= 0 {
 		b = 1000
+	}
+	maxResamples := opts.MaxResamples
+	if maxResamples == 0 {
+		maxResamples = DefaultMaxBootstrapResamples
+	}
+	if maxResamples > 0 && b > maxResamples {
+		return nil, ErrBootstrapBudget
 	}
 	level := opts.Level
 	if level == 0 {
@@ -189,14 +242,23 @@ func Bootstrap(n int, stat func(idx []int) (float64, error), opts BootstrapOptio
 	for i := range identity {
 		identity[i] = i
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	point, err := stat(identity)
 	if err != nil {
 		return nil, err
+	}
+	if !isFinite(point) {
+		return nil, ErrBootstrap
 	}
 
 	rng := rand.New(rand.NewSource(opts.Seed))
 	reps := make([]float64, 0, b)
 	for r := 0; r < b; r++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		idx := make([]int, n)
 		for i := 0; i < n; i++ {
 			idx[i] = rng.Intn(n)
@@ -220,6 +282,8 @@ func Bootstrap(n int, stat func(idx []int) (float64, error), opts BootstrapOptio
 		StdErr:     stddev(reps),
 		Level:      level,
 		Replicates: reps,
+		Attempted:  b,
+		Failed:     b - len(reps),
 	}, nil
 }
 
@@ -234,8 +298,15 @@ func Bootstrap(n int, stat func(idx []int) (float64, error), opts BootstrapOptio
 // the intervention and outcome variable indices (distinct, in range). A resample
 // whose sample covariance is not positive definite is skipped by the engine.
 // Errors: ErrTooFewVariables (fewer than two columns), ErrUnequalLengths,
-// ErrBadGaussian (x/y out of range or equal), or the engine's ErrBootstrap.
+// ErrBadGaussian (x/y out of range or equal), and the errors documented by
+// BootstrapContext, including cancellation and resource-budget exhaustion.
 func (e *Expr) BootstrapGaussianEffect(data [][]float64, x, y int, opts BootstrapOptions) (*BootstrapResult, error) {
+	return e.BootstrapGaussianEffectContext(context.Background(), data, x, y, opts)
+}
+
+// BootstrapGaussianEffectContext is BootstrapGaussianEffect with cooperative
+// cancellation between fits.
+func (e *Expr) BootstrapGaussianEffectContext(ctx context.Context, data [][]float64, x, y int, opts BootstrapOptions) (*BootstrapResult, error) {
 	p := len(data)
 	if p < 2 {
 		return nil, ErrTooFewVariables
@@ -260,7 +331,7 @@ func (e *Expr) BootstrapGaussianEffect(data [][]float64, x, y int, opts Bootstra
 		}
 		return gaussianEffect(f, x, y)
 	}
-	return Bootstrap(n, stat, opts)
+	return BootstrapContext(ctx, n, stat, opts)
 }
 
 // gaussianEffect reads the unit-contrast interventional slope of the outcome y in
