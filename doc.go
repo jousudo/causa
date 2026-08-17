@@ -22,6 +22,12 @@
 //     opt-in). Predictive rather than structural; controls supplied histories,
 //     not hidden causes. Independently cross-checked against base R. Released
 //     through v0.16.0.
+//   - Unit-root testing — the Augmented Dickey-Fuller test (ADFTest) with
+//     no-constant, constant, and constant-plus-trend specifications and
+//     configurable augmentation lags, deciding stationarity against MacKinnon's
+//     asymptotic Dickey-Fuller critical values (ADFResult.Reject). The t-ratio
+//     reuses the QR RSS route and is cross-checked against an independent
+//     normal-equations computation. Released in v0.17.0.
 //   - Constraint-based causal discovery — the order-independent PC-stable
 //     algorithm returning a CPDAG (PCStable), with a pluggable
 //     conditional-independence test (CITest) whose linear-Gaussian

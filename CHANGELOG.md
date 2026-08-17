@@ -6,6 +6,29 @@ source or behavioral incompatibility explicitly.
 
 ## [Unreleased]
 
+## [v0.17.0] - 2026-08-17
+
+### Added
+
+- Augmented Dickey-Fuller unit-root test (`ADFTest`) with no-constant,
+  constant, and constant-plus-trend specifications (`ADFTrend`) and configurable
+  augmentation lags. The Dickey-Fuller t-ratio on the lagged-level coefficient is
+  computed from the restricted/full residual sums of squares through the existing
+  Householder-QR least-squares solver (matching `GrangerTest`), with the empty
+  restricted design (no-constant, lag 0) handled directly.
+- `ADFResult.Reject` decides stationarity against MacKinnon's asymptotic
+  (large-sample) Dickey-Fuller critical values at 0.01, 0.05, and 0.10, chosen by
+  trend specification.
+- An independent normal-equations oracle (Gauss-Jordan inverse, coefficient
+  covariance) cross-checks the statistic across every trend and several lags,
+  plus stationary-vs-random-walk decision tests and the error surface.
+
+### Compatibility
+
+- This release is additive. It introduces no changes to existing APIs. The
+  critical values are asymptotic and carry no finite-sample correction, so a
+  borderline statistic on a short series is indicative rather than definitive.
+
 ## [v0.16.0] - 2026-08-16
 
 ### Added
